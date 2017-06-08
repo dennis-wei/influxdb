@@ -1,7 +1,6 @@
 package httpd
 
 import (
-	"errors"
 	"time"
 
 	"github.com/influxdata/influxdb/influxql"
@@ -27,8 +26,12 @@ RESULTS:
 		r := &influxql.Result{
 			StatementID: result.ID,
 			Messages:    result.Messages,
+			Err:         result.Error,
 		}
 		resp.Results = append(resp.Results, r)
+		if r.Err != nil {
+			continue
+		}
 
 		for series := range result.SeriesCh {
 			s := &models.Row{
@@ -39,9 +42,9 @@ RESULTS:
 			r.Series = append(r.Series, s)
 
 			for row := range series.RowCh {
-				if row.Error != "" {
+				if row.Error != nil {
 					// TODO: Better implementation.
-					r.Err = errors.New(row.Error)
+					r.Err = row.Error
 					r.Series = nil
 					continue RESULTS
 				}

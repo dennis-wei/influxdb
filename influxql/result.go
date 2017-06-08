@@ -15,7 +15,7 @@ const (
 
 type Row struct {
 	Values []interface{}
-	Error  string
+	Error  error
 }
 
 type Series struct {
@@ -28,6 +28,7 @@ type ResultSet struct {
 	ID       int
 	Messages []*Message
 	Columns  []string
+	Error    error
 	SeriesCh <-chan *Series
 }
 
