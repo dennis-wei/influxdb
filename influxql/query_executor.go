@@ -108,7 +108,7 @@ type ExecutionContext struct {
 	Query *QueryTask
 
 	// Output channel where results and errors should be sent.
-	Results chan *Result
+	Results chan *ResultSet
 
 	// Hold the query executor's logger.
 	Log zap.Logger
@@ -120,27 +120,18 @@ type ExecutionContext struct {
 	ExecutionOptions
 }
 
-// send sends a Result to the Results channel and will exit if the query has
-// been aborted.
-func (ctx *ExecutionContext) send(result *Result) error {
-	select {
-	case <-ctx.AbortCh:
-		return ErrQueryAborted
-	case ctx.Results <- result:
-	}
-	return nil
-}
-
 // Send sends a Result to the Results channel and will exit if the query has
 // been interrupted or aborted.
 func (ctx *ExecutionContext) Send(result *Result) error {
-	select {
-	case <-ctx.InterruptCh:
-		return ErrQueryInterrupted
-	case <-ctx.AbortCh:
-		return ErrQueryAborted
-	case ctx.Results <- result:
-	}
+	/*
+		select {
+		case <-ctx.InterruptCh:
+			return ErrQueryInterrupted
+		case <-ctx.AbortCh:
+			return ErrQueryAborted
+		case ctx.Results <- result:
+		}
+	*/
 	return nil
 }
 
@@ -218,13 +209,13 @@ func (e *QueryExecutor) WithLogger(log zap.Logger) {
 }
 
 // ExecuteQuery executes each statement within a query.
-func (e *QueryExecutor) ExecuteQuery(query *Query, opt ExecutionOptions, closing chan struct{}) <-chan *Result {
-	results := make(chan *Result)
+func (e *QueryExecutor) ExecuteQuery(query *Query, opt ExecutionOptions, closing chan struct{}) <-chan *ResultSet {
+	results := make(chan *ResultSet)
 	go e.executeQuery(query, opt, closing, results)
 	return results
 }
 
-func (e *QueryExecutor) executeQuery(query *Query, opt ExecutionOptions, closing <-chan struct{}, results chan *Result) {
+func (e *QueryExecutor) executeQuery(query *Query, opt ExecutionOptions, closing <-chan struct{}, results chan *ResultSet) {
 	defer close(results)
 	defer e.recover(query, results)
 
@@ -239,7 +230,7 @@ func (e *QueryExecutor) executeQuery(query *Query, opt ExecutionOptions, closing
 	qid, task, err := e.TaskManager.AttachQuery(query, opt.Database, closing)
 	if err != nil {
 		select {
-		case results <- &Result{Err: err}:
+		case results <- &ResultSet{Error: err}:
 		case <-opt.AbortCh:
 		}
 		return
@@ -291,8 +282,8 @@ LOOP:
 						case "_tags":
 							command = "SHOW TAG VALUES"
 						}
-						results <- &Result{
-							Err: fmt.Errorf("unable to use system source '%s': use %s instead", s.Name, command),
+						results <- &ResultSet{
+							Error: fmt.Errorf("unable to use system source '%s': use %s instead", s.Name, command),
 						}
 						break LOOP
 					}
@@ -304,7 +295,7 @@ LOOP:
 		// This can occur on meta read statements which convert to SELECT statements.
 		newStmt, err := RewriteStatement(stmt)
 		if err != nil {
-			results <- &Result{Err: err}
+			results <- &ResultSet{Error: err}
 			break
 		}
 		stmt = newStmt
@@ -312,8 +303,10 @@ LOOP:
 		// Normalize each statement if possible.
 		if normalizer, ok := e.StatementExecutor.(StatementNormalizer); ok {
 			if err := normalizer.NormalizeStatement(stmt, defaultDB); err != nil {
-				if err := ctx.send(&Result{Err: err}); err == ErrQueryAborted {
+				select {
+				case <-ctx.AbortCh:
 					return
+				case results <- &ResultSet{Error: err}:
 				}
 				break
 			}
@@ -336,11 +329,10 @@ LOOP:
 
 		// Send an error for this result if it failed for some reason.
 		if err != nil {
-			if err := ctx.send(&Result{
-				StatementID: i,
-				Err:         err,
-			}); err == ErrQueryAborted {
+			select {
+			case <-ctx.AbortCh:
 				return
+			case results <- &ResultSet{Error: err}:
 			}
 			// Stop after the first error.
 			break
@@ -364,21 +356,20 @@ LOOP:
 
 	// Send error results for any statements which were not executed.
 	for ; i < len(query.Statements)-1; i++ {
-		if err := ctx.send(&Result{
-			StatementID: i,
-			Err:         ErrNotExecuted,
-		}); err == ErrQueryAborted {
+		select {
+		case <-ctx.AbortCh:
 			return
+		case results <- &ResultSet{ID: i, Error: ErrNotExecuted}:
 		}
 	}
 }
 
-func (e *QueryExecutor) recover(query *Query, results chan *Result) {
+func (e *QueryExecutor) recover(query *Query, results chan *ResultSet) {
 	if err := recover(); err != nil {
 		e.Logger.Error(fmt.Sprintf("%s [panic:%s] %s", query.String(), err, debug.Stack()))
-		results <- &Result{
-			StatementID: -1,
-			Err:         fmt.Errorf("%s [panic:%s]", query.String(), err),
+		results <- &ResultSet{
+			ID:    -1,
+			Error: fmt.Errorf("%s [panic:%s]", query.String(), err),
 		}
 	}
 }
