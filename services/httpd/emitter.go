@@ -33,7 +33,7 @@ RESULTS:
 			continue
 		}
 
-		for series := range result.SeriesCh {
+		for series := range result.SeriesCh() {
 			s := &models.Row{
 				Name:    series.Name,
 				Tags:    series.Tags.KeyValues(),
@@ -41,7 +41,7 @@ RESULTS:
 			}
 			r.Series = append(r.Series, s)
 
-			for row := range series.RowCh {
+			for row := range series.RowCh() {
 				if row.Error != nil {
 					// TODO: Better implementation.
 					r.Err = row.Error
@@ -79,7 +79,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 	for result := range results {
 		messages := result.Messages
 
-		series := <-result.SeriesCh
+		series := <-result.SeriesCh()
 		if series == nil {
 			w.WriteResponse(Response{Results: []*influxql.Result{
 				{
@@ -92,7 +92,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 
 		for series != nil {
 			var values [][]interface{}
-			for row := range series.RowCh {
+			for row := range series.RowCh() {
 				if convertToEpoch != nil {
 					convertToEpoch(&row)
 				}
@@ -128,7 +128,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 				Messages: messages,
 			}
 
-			series = <-result.SeriesCh
+			series = <-result.SeriesCh()
 			if series != nil {
 				r.Partial = true
 			}

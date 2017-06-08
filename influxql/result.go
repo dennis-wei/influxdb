@@ -19,9 +19,40 @@ type Row struct {
 }
 
 type Series struct {
-	Name  string
-	Tags  Tags
-	RowCh <-chan Row
+	Name    string
+	Tags    Tags
+	AbortCh <-chan struct{}
+
+	rowCh chan Row
+}
+
+func (s *Series) Emit(values []interface{}) error {
+	row := Row{Values: values}
+	select {
+	case <-s.AbortCh:
+		return ErrQueryAborted
+	case s.rowCh <- row:
+		return nil
+	}
+}
+
+func (s *Series) Error(err error) error {
+	row := Row{Error: err}
+	select {
+	case <-s.AbortCh:
+		return ErrQueryAborted
+	case s.rowCh <- row:
+		return nil
+	}
+}
+
+func (s *Series) RowCh() <-chan Row {
+	return s.rowCh
+}
+
+func (s *Series) Close() error {
+	close(s.rowCh)
+	return nil
 }
 
 type ResultSet struct {
@@ -29,7 +60,42 @@ type ResultSet struct {
 	Messages []*Message
 	Columns  []string
 	Error    error
-	SeriesCh <-chan *Series
+	AbortCh  <-chan struct{}
+
+	seriesCh chan *Series
+}
+
+func (rs *ResultSet) Init() *ResultSet {
+	rs.seriesCh = make(chan *Series)
+	return rs
+}
+
+func (rs *ResultSet) CreateSeries(name string) (*Series, error) {
+	return rs.CreateSeriesWithTags(name, Tags{})
+}
+
+func (rs *ResultSet) CreateSeriesWithTags(name string, tags Tags) (*Series, error) {
+	series := &Series{
+		Name:    name,
+		Tags:    tags,
+		rowCh:   make(chan Row),
+		AbortCh: rs.AbortCh,
+	}
+	select {
+	case <-rs.AbortCh:
+		return nil, ErrQueryAborted
+	case rs.seriesCh <- series:
+		return series, nil
+	}
+}
+
+func (rs *ResultSet) SeriesCh() <-chan *Series {
+	return rs.seriesCh
+}
+
+func (rs *ResultSet) Close() error {
+	close(rs.seriesCh)
+	return nil
 }
 
 // TagSet is a fundamental concept within the query system. It represents a composite series,

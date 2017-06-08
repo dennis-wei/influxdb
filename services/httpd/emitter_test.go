@@ -12,63 +12,37 @@ import (
 )
 
 func EmitTestResults(results chan *influxql.ResultSet) {
-	seriesCh := make(chan *influxql.Series)
 	result := &influxql.ResultSet{
-		ID:       0,
-		Columns:  []string{"time", "value"},
-		SeriesCh: seriesCh,
+		ID:      0,
+		Columns: []string{"time", "value"},
 	}
-	results <- result
+	results <- result.Init()
 
-	rowCh := make(chan influxql.Row)
-	series := &influxql.Series{
-		Name: "cpu",
-		Tags: influxql.NewTags(map[string]string{
-			"host": "server01",
-		}),
-		RowCh: rowCh,
-	}
-	seriesCh <- series
+	series, _ := result.CreateSeriesWithTags("cpu",
+		influxql.NewTags(map[string]string{"host": "server01"}))
+	series.Emit([]interface{}{time.Unix(0, 0).UTC(), 2.0})
+	series.Emit([]interface{}{time.Unix(10, 0).UTC(), 5.0})
+	series.Emit([]interface{}{time.Unix(20, 0).UTC(), 7.0})
+	series.Close()
 
-	rowCh <- influxql.Row{Values: []interface{}{time.Unix(0, 0).UTC(), 2.0}}
-	rowCh <- influxql.Row{Values: []interface{}{time.Unix(10, 0).UTC(), 5.0}}
-	rowCh <- influxql.Row{Values: []interface{}{time.Unix(20, 0).UTC(), 7.0}}
-	close(rowCh)
+	series, _ = result.CreateSeriesWithTags("cpu",
+		influxql.NewTags(map[string]string{"host": "server02"}))
+	series.Emit([]interface{}{time.Unix(0, 0).UTC(), 8.0})
+	series.Close()
+	result.Close()
 
-	rowCh = make(chan influxql.Row)
-	series = &influxql.Series{
-		Name: "cpu",
-		Tags: influxql.NewTags(map[string]string{
-			"host": "server02",
-		}),
-		RowCh: rowCh,
-	}
-	seriesCh <- series
-	close(seriesCh)
-
-	rowCh <- influxql.Row{Values: []interface{}{time.Unix(0, 0).UTC(), 8.0}}
-	close(rowCh)
-
-	seriesCh = make(chan *influxql.Series)
 	result = &influxql.ResultSet{
-		ID:       1,
-		Columns:  []string{"name"},
-		SeriesCh: seriesCh,
+		ID:      1,
+		Columns: []string{"name"},
 	}
-	results <- result
+	results <- result.Init()
 	close(results)
 
-	rowCh = make(chan influxql.Row)
-	series = &influxql.Series{
-		Name:  "databases",
-		RowCh: rowCh,
-	}
-	seriesCh <- series
-	close(seriesCh)
-
-	rowCh <- influxql.Row{Values: []interface{}{"db0"}}
-	rowCh <- influxql.Row{Values: []interface{}{"db1"}}
-	close(rowCh)
+	series, _ = result.CreateSeries("databases")
+	series.Emit([]interface{}{"db0"})
+	series.Emit([]interface{}{"db1"})
+	series.Close()
+	result.Close()
 }
 
 func TestEmitter(t *testing.T) {
