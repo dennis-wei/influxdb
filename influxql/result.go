@@ -13,6 +13,24 @@ const (
 	WarningLevel = "warning"
 )
 
+type Row struct {
+	Values []interface{}
+	Error  string
+}
+
+type Series struct {
+	Name  string
+	Tags  Tags
+	RowCh <-chan Row
+}
+
+type ResultSet struct {
+	ID       int
+	Messages []*Message
+	Columns  []string
+	SeriesCh <-chan *Series
+}
+
 // TagSet is a fundamental concept within the query system. It represents a composite series,
 // composed of multiple individual series that share a set of tag attributes.
 type TagSet struct {
@@ -52,7 +70,7 @@ type Message struct {
 // ReadOnlyWarning generates a warning message that tells the user the command
 // they are using is being used for writing in a read only context.
 //
-// This is a temporary method while to be used while transitioning to read only
+// This is a temporary method to be used while transitioning to read only
 // operations for issue #6290.
 func ReadOnlyWarning(stmt string) *Message {
 	return &Message{
