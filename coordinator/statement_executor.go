@@ -480,14 +480,38 @@ func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPassw
 }
 
 func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *influxql.ExecutionContext) error {
+	if stmt.Target != nil && stmt.Target.Measurement.Database == "" {
+		return errNoDatabaseInTarget
+	}
+
 	itrs, stmt, err := e.createIterators(stmt, ctx)
 	if err != nil {
 		return err
 	}
-
-	result, err := ctx.CreateResult()
+	result, err := func() (*influxql.ResultSet, error) {
+		if stmt.Target != nil && ctx.ReadOnly {
+			return ctx.CreateResult(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.CreateResult()
+	}()
 	if err != nil {
 		return err
+	}
+
+	// If we are writing the points, we need to send this result to the
+	// goroutine that will be writing the points so the goroutine can emit the
+	// number of points that have been written.
+	if stmt.Target != nil {
+		// Replace the result we just passed with our own created result. This
+		// allows us to write to some location that is being read by the
+		// writer.
+		r := &influxql.ResultSet{
+			ID:      ctx.StatementID,
+			AbortCh: ctx.AbortCh,
+		}
+		r.Init()
+		go e.writeResult(stmt, r, result)
+		result = r
 	}
 	defer result.Close()
 
@@ -529,12 +553,10 @@ func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatemen
 		}
 
 		// Read next set of values from all iterators at a given time/name/tags.
-		var values []interface{}
+		values := make([]interface{}, len(columns))
 		if stmt.OmitTime {
-			values = make([]interface{}, len(columns))
 			em.ReadInto(t, name, tags, values)
 		} else {
-			values = make([]interface{}, len(columns)+1)
 			values[0] = time.Unix(0, t).In(loc)
 			em.ReadInto(t, name, tags, values[1:])
 		}
@@ -559,76 +581,6 @@ func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatemen
 			return influxql.ErrQueryAborted
 		}
 	}
-
-	/*
-		// Emit rows to the results channel.
-		var writeN int64
-		var emitted bool
-
-		var pointsWriter *BufferedPointsWriter
-		if stmt.Target != nil {
-			pointsWriter = NewBufferedPointsWriter(e.PointsWriter, stmt.Target.Measurement.Database, stmt.Target.Measurement.RetentionPolicy, 10000)
-		}
-
-		for {
-			row, partial, err := em.Emit()
-			if err != nil {
-				return err
-			} else if row == nil {
-				// Check if the query was interrupted while emitting.
-				select {
-				case <-ctx.InterruptCh:
-					return influxql.ErrQueryInterrupted
-				default:
-				}
-				break
-			}
-
-			// Write points back into system for INTO statements.
-			if stmt.Target != nil {
-				if err := e.writeInto(pointsWriter, stmt, row); err != nil {
-					return err
-				}
-				writeN += int64(len(row.Values))
-				continue
-			}
-
-			result := &influxql.Result{
-				StatementID: ctx.StatementID,
-				Series:      []*models.Row{row},
-				Partial:     partial,
-			}
-
-			// Send results or exit if closing.
-			if err := ctx.Send(result); err != nil {
-				return err
-			}
-
-			emitted = true
-		}
-
-		// Flush remaining points and emit write count if an INTO statement.
-		if stmt.Target != nil {
-			if err := pointsWriter.Flush(); err != nil {
-				return err
-			}
-
-			var messages []*influxql.Message
-			if ctx.ReadOnly {
-				messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
-			}
-
-			return ctx.Send(&influxql.Result{
-				StatementID: ctx.StatementID,
-				Messages:    messages,
-				Series: []*models.Row{{
-					Name:    "result",
-					Columns: []string{"time", "written"},
-					Values:  [][]interface{}{{time.Unix(0, 0).UTC(), writeN}},
-				}},
-			})
-		}
-	*/
 }
 
 func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx *influxql.ExecutionContext) ([]influxql.Iterator, *influxql.SelectStatement, error) {
@@ -896,6 +848,7 @@ func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.Sh
 	if !ok {
 		return influxql.ErrQueryAborted
 	}
+	defer series.Close()
 
 	for _, rpi := range di.RetentionPolicies {
 		series.Emit([]interface{}{rpi.Name, rpi.Duration.String(), rpi.ShardGroupDuration.String(), rpi.ReplicaN, di.DefaultRetentionPolicy == rpi.Name})
@@ -1136,148 +1089,91 @@ type BufferedPointsWriter struct {
 	retentionPolicy string
 }
 
-// NewBufferedPointsWriter returns a new BufferedPointsWriter.
-func NewBufferedPointsWriter(w pointsWriter, database, retentionPolicy string, capacity int) *BufferedPointsWriter {
-	return &BufferedPointsWriter{
-		w:               w,
-		buf:             make([]models.Point, 0, capacity),
-		database:        database,
-		retentionPolicy: retentionPolicy,
-	}
-}
+func (e *StatementExecutor) writeResult(stmt *influxql.SelectStatement, in, out *influxql.ResultSet) {
+	defer out.Close()
+	measurementName := stmt.Target.Measurement.Name
 
-// WritePointsInto implements pointsWriter for BufferedPointsWriter.
-func (w *BufferedPointsWriter) WritePointsInto(req *IntoWriteRequest) error {
-	// Make sure we're buffering points only for the expected destination.
-	if req.Database != w.database || req.RetentionPolicy != w.retentionPolicy {
-		return fmt.Errorf("writer for %s.%s can't write into %s.%s", w.database, w.retentionPolicy, req.Database, req.RetentionPolicy)
-	}
-
-	for i := 0; i < len(req.Points); {
-		// Get the available space in the buffer.
-		avail := cap(w.buf) - len(w.buf)
-
-		// Calculate number of points to copy into the buffer.
-		n := len(req.Points[i:])
-		if n > avail {
-			n = avail
+	var writeN int64
+	points := make([]models.Point, 0, 10000)
+	for series := range in.SeriesCh() {
+		if series.Err != nil {
+			continue
 		}
 
-		// Copy points into buffer.
-		w.buf = append(w.buf, req.Points[i:n+i]...)
+		// Convert the tags from the influxql format to the one expected by models.
+		name := measurementName
+		if name == "" {
+			name = series.Name
+		}
+		tags := models.NewTags(series.Tags.KeyValues())
+		for row := range series.RowCh() {
+			if row.Err != nil {
+				continue
+			}
 
-		// Advance the index by number of points copied.
-		i += n
+			// Convert the row back to a point.
+			point, err := convertRowToPoint(name, tags, series.Columns, row.Values)
+			if err != nil {
+				out.Error(err)
+				return
+			}
+			points = append(points, point)
 
-		// If buffer is full, flush points to underlying writer.
-		if len(w.buf) == cap(w.buf) {
-			if err := w.Flush(); err != nil {
-				return err
+			if len(points) == cap(points) {
+				if err := e.PointsWriter.WritePointsInto(&IntoWriteRequest{
+					Database:        stmt.Target.Measurement.Database,
+					RetentionPolicy: stmt.Target.Measurement.RetentionPolicy,
+					Points:          points,
+				}); err != nil {
+					out.Error(err)
+					return
+				}
+				writeN += int64(len(points))
+				points = points[:0]
 			}
 		}
 	}
 
-	return nil
-}
-
-// Flush writes all buffered points to the underlying writer.
-func (w *BufferedPointsWriter) Flush() error {
-	if len(w.buf) == 0 {
-		return nil
+	if len(points) > 0 {
+		if err := e.PointsWriter.WritePointsInto(&IntoWriteRequest{
+			Database:        stmt.Target.Measurement.Database,
+			RetentionPolicy: stmt.Target.Measurement.RetentionPolicy,
+			Points:          points,
+		}); err != nil {
+			out.Error(err)
+			return
+		}
+		writeN += int64(len(points))
 	}
 
-	if err := w.w.WritePointsInto(&IntoWriteRequest{
-		Database:        w.database,
-		RetentionPolicy: w.retentionPolicy,
-		Points:          w.buf,
-	}); err != nil {
-		return err
+	series, ok := out.WithColumns("time", "written").CreateSeries("result")
+	if !ok {
+		return
 	}
-
-	// Clear the buffer.
-	w.buf = w.buf[:0]
-
-	return nil
-}
-
-// Len returns the number of points buffered.
-func (w *BufferedPointsWriter) Len() int { return len(w.buf) }
-
-// Cap returns the capacity (in points) of the buffer.
-func (w *BufferedPointsWriter) Cap() int { return cap(w.buf) }
-
-func (e *StatementExecutor) writeInto(w pointsWriter, stmt *influxql.SelectStatement, row *models.Row) error {
-	if stmt.Target.Measurement.Database == "" {
-		return errNoDatabaseInTarget
-	}
-
-	// It might seem a bit weird that this is where we do this, since we will have to
-	// convert rows back to points. The Executors (both aggregate and raw) are complex
-	// enough that changing them to write back to the DB is going to be clumsy
-	//
-	// it might seem weird to have the write be in the QueryExecutor, but the interweaving of
-	// limitedRowWriter and ExecuteAggregate/Raw makes it ridiculously hard to make sure that the
-	// results will be the same as when queried normally.
-	name := stmt.Target.Measurement.Name
-	if name == "" {
-		name = row.Name
-	}
-
-	points, err := convertRowToPoints(name, row)
-	if err != nil {
-		return err
-	}
-
-	if err := w.WritePointsInto(&IntoWriteRequest{
-		Database:        stmt.Target.Measurement.Database,
-		RetentionPolicy: stmt.Target.Measurement.RetentionPolicy,
-		Points:          points,
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	series.Emit([]interface{}{time.Unix(0, 0).UTC(), writeN})
+	series.Close()
 }
 
 var errNoDatabaseInTarget = errors.New("no database in target")
 
 // convertRowToPoints will convert a query result Row into Points that can be written back in.
-func convertRowToPoints(measurementName string, row *models.Row) ([]models.Point, error) {
-	// figure out which parts of the result are the time and which are the fields
-	timeIndex := -1
-	fieldIndexes := make(map[string]int)
-	for i, c := range row.Columns {
-		if c == "time" {
-			timeIndex = i
-		} else {
-			fieldIndexes[c] = i
+func convertRowToPoint(measurementName string, tags models.Tags, columns []string, row []interface{}) (models.Point, error) {
+	// Iterate through the columns and treat the first "time" field as the time.
+	var t time.Time
+	vals := make(map[string]interface{}, len(columns)-1)
+	for i, c := range columns {
+		if c == "time" && t.IsZero() {
+			t = row[i].(time.Time)
+		} else if val := row[i]; val != nil {
+			vals[c] = val
 		}
 	}
 
-	if timeIndex == -1 {
+	// If the time is zero, there was no time for some reason.
+	if t.IsZero() {
 		return nil, errors.New("error finding time index in result")
 	}
-
-	points := make([]models.Point, 0, len(row.Values))
-	for _, v := range row.Values {
-		vals := make(map[string]interface{})
-		for fieldName, fieldIndex := range fieldIndexes {
-			val := v[fieldIndex]
-			if val != nil {
-				vals[fieldName] = v[fieldIndex]
-			}
-		}
-
-		p, err := models.NewPoint(measurementName, models.NewTags(row.Tags), vals, v[timeIndex].(time.Time))
-		if err != nil {
-			// Drop points that can't be stored
-			continue
-		}
-
-		points = append(points, p)
-	}
-
-	return points, nil
+	return models.NewPoint(measurementName, tags, vals, t)
 }
 
 // NormalizeStatement adds a default database and policy to the measurements in statement.

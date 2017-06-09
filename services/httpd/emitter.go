@@ -52,18 +52,17 @@ RESULTS:
 					r.Err = row.Err
 					r.Series = nil
 					continue RESULTS
+				} else if e.MaxRowLimit > 0 && rows+len(s.Values) >= e.MaxRowLimit {
+					s.Partial = true
+					break RESULTS
 				}
 
 				if convertToEpoch != nil {
 					convertToEpoch(&row)
 				}
 				s.Values = append(s.Values, row.Values)
-
-				if e.MaxRowLimit > 0 && rows+len(s.Values) >= e.MaxRowLimit {
-					s.Partial = true
-					break RESULTS
-				}
 			}
+			rows += len(s.Values)
 		}
 	}
 	w.WriteResponse(resp)
