@@ -152,7 +152,7 @@ func (ctx *ExecutionContext) Error(err error) bool {
 	select {
 	case <-ctx.AbortCh:
 		return false
-	case ctx.Results <- &ResultSet{ID: ctx.StatementID, Error: err}:
+	case ctx.Results <- &ResultSet{ID: ctx.StatementID, Err: err}:
 		return true
 	}
 }
@@ -256,7 +256,7 @@ func (e *QueryExecutor) executeQuery(query *Query, opt ExecutionOptions, closing
 	qid, task, err := e.TaskManager.AttachQuery(query, opt.Database, closing)
 	if err != nil {
 		select {
-		case results <- &ResultSet{Error: err}:
+		case results <- &ResultSet{Err: err}:
 		case <-opt.AbortCh:
 		}
 		return
@@ -387,8 +387,8 @@ func (e *QueryExecutor) recover(query *Query, results chan *ResultSet, abortCh <
 	if err := recover(); err != nil {
 		e.Logger.Error(fmt.Sprintf("%s [panic:%s] %s", query.String(), err, debug.Stack()))
 		result := &ResultSet{
-			ID:    -1,
-			Error: fmt.Errorf("%s [panic:%s]", query.String(), err),
+			ID:  -1,
+			Err: fmt.Errorf("%s [panic:%s]", query.String(), err),
 		}
 		select {
 		case <-abortCh:

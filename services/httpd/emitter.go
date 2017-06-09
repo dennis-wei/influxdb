@@ -26,7 +26,7 @@ RESULTS:
 		r := &influxql.Result{
 			StatementID: result.ID,
 			Messages:    result.Messages,
-			Err:         result.Error,
+			Err:         result.Err,
 		}
 		resp.Results = append(resp.Results, r)
 		if r.Err != nil {
@@ -42,9 +42,9 @@ RESULTS:
 			r.Series = append(r.Series, s)
 
 			for row := range series.RowCh() {
-				if row.Error != nil {
+				if row.Err != nil {
 					// TODO: Better implementation.
-					r.Err = row.Error
+					r.Err = row.Err
 					r.Series = nil
 					continue RESULTS
 				}

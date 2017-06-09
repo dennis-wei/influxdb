@@ -467,19 +467,19 @@ func (h *Handler) async(query *influxql.Query, results <-chan *influxql.ResultSe
 	for r := range results {
 		// Drain the results and do nothing with them.
 		// If it fails, log the failure so there is at least a record of it.
-		if r.Error != nil {
+		if r.Err != nil {
 			// Do not log when a statement was not executed since there would
 			// have been an earlier error that was already logged.
-			if r.Error == influxql.ErrNotExecuted {
+			if r.Err == influxql.ErrNotExecuted {
 				continue
 			}
-			h.Logger.Info(fmt.Sprintf("error while running async query: %s: %s", query, r.Error))
+			h.Logger.Info(fmt.Sprintf("error while running async query: %s: %s", query, r.Err))
 		}
 
 		for series := range r.SeriesCh() {
 			for row := range series.RowCh() {
-				if row.Error != nil {
-					h.Logger.Info(fmt.Sprintf("error while running async query: %s: %s", query, row.Error))
+				if row.Err != nil {
+					h.Logger.Info(fmt.Sprintf("error while running async query: %s: %s", query, row.Err))
 				}
 			}
 		}

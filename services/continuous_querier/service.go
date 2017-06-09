@@ -379,8 +379,8 @@ func (s *Service) runContinuousQueryAndWriteResult(cq *ContinuousQuery) error {
 	if !ok {
 		panic("result channel was closed")
 	}
-	if res.Error != nil {
-		return res.Error
+	if res.Err != nil {
+		return res.Err
 	}
 
 	// Drain the result.

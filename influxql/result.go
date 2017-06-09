@@ -15,13 +15,14 @@ const (
 
 type Row struct {
 	Values []interface{}
-	Error  error
+	Err    error
 }
 
 type Series struct {
 	Name    string
 	Tags    Tags
 	Columns []string
+	Err     error
 	AbortCh <-chan struct{}
 
 	rowCh chan Row
@@ -37,13 +38,13 @@ func (s *Series) Emit(values []interface{}) (ok bool) {
 	}
 }
 
-func (s *Series) Error(err error) error {
-	row := Row{Error: err}
+func (s *Series) Error(err error) (ok bool) {
+	row := Row{Err: err}
 	select {
 	case <-s.AbortCh:
-		return ErrQueryAborted
+		return false
 	case s.rowCh <- row:
-		return nil
+		return true
 	}
 }
 
@@ -59,7 +60,7 @@ func (s *Series) Close() error {
 type ResultSet struct {
 	ID       int
 	Messages []*Message
-	Error    error
+	Err      error
 	AbortCh  <-chan struct{}
 
 	seriesCh chan *Series
@@ -94,6 +95,16 @@ func (rs *ResultSet) CreateSeriesWithTags(name string, tags Tags) (*Series, bool
 		return nil, false
 	case rs.seriesCh <- series:
 		return series, true
+	}
+}
+
+func (rs *ResultSet) Error(err error) (ok bool) {
+	series := &Series{Err: err}
+	select {
+	case <-rs.AbortCh:
+		return false
+	case rs.seriesCh <- series:
+		return true
 	}
 }
 

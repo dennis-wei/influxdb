@@ -85,7 +85,7 @@ func TestQueryExecutor_KillQuery(t *testing.T) {
 
 	result := <-results
 	if result.Error != influxql.ErrQueryInterrupted {
-		t.Errorf("unexpected error: %s", result.Error)
+		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
 
@@ -115,8 +115,8 @@ func TestQueryExecutor_Interrupt(t *testing.T) {
 	results := e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, closing)
 	close(closing)
 	result := <-results
-	if result.Error != influxql.ErrQueryInterrupted {
-		t.Errorf("unexpected error: %s", result.Error)
+	if result.Err != influxql.ErrQueryInterrupted {
+		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestQueryExecutor_ShowQueries(t *testing.T) {
 	rows := make([][]interface{}, 0, 1)
 	for row := range series.RowCh() {
 		if row.Error != nil {
-			t.Errorf("unexpected error: %s", result.Error)
+			t.Errorf("unexpected error: %s", result.Err)
 		}
 		rows = append(rows, row.Values)
 	}
@@ -198,8 +198,8 @@ func TestQueryExecutor_Limit_Timeout(t *testing.T) {
 
 	results := e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil)
 	result := <-results
-	if result.Error == nil || !strings.Contains(result.Error.Error(), "query-timeout") {
-		t.Errorf("unexpected error: %s", result.Error)
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "query-timeout") {
+		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
 
@@ -234,8 +234,8 @@ func TestQueryExecutor_Limit_ConcurrentQueries(t *testing.T) {
 
 	select {
 	case result := <-results:
-		if result.Error == nil || !strings.Contains(result.Error.Error(), "max-concurrent-queries") {
-			t.Errorf("unexpected error: %s", result.Error)
+		if result.Err == nil || !strings.Contains(result.Err.Error(), "max-concurrent-queries") {
+			t.Errorf("unexpected error: %s", result.Err)
 		}
 	case <-qid:
 		t.Errorf("unexpected statement execution for the second query")
@@ -266,8 +266,8 @@ func TestQueryExecutor_Close(t *testing.T) {
 	results := e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil)
 	go func(results <-chan *influxql.ResultSet) {
 		result := <-results
-		if result.Error != influxql.ErrQueryEngineShutdown {
-			t.Errorf("unexpected error: %s", result.Error)
+		if result.Err != influxql.ErrQueryEngineShutdown {
+			t.Errorf("unexpected error: %s", result.Err)
 		}
 		close(ch2)
 	}(results)
@@ -287,8 +287,8 @@ func TestQueryExecutor_Close(t *testing.T) {
 
 	results = e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil)
 	result := <-results
-	if result.Error != influxql.ErrQueryEngineShutdown {
-		t.Errorf("unexpected error: %s", result.Error)
+	if result.Err != influxql.ErrQueryEngineShutdown {
+		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
 
@@ -310,8 +310,8 @@ func TestQueryExecutor_Panic(t *testing.T) {
 
 	results := e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil)
 	result := <-results
-	if result.Error == nil || result.Error.Error() != "SELECT count(value) FROM cpu [panic:test error]" {
-		t.Errorf("unexpected error: %s", result.Error)
+	if result.Err == nil || result.Err.Error() != "SELECT count(value) FROM cpu [panic:test error]" {
+		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
 
@@ -359,8 +359,8 @@ func TestQueryExecutor_InvalidSource(t *testing.T) {
 
 		results := e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil)
 		result := <-results
-		if result.Error == nil || result.Error.Error() != tt.err {
-			t.Errorf("%d. unexpected error: %s", i, result.Error)
+		if result.Err == nil || result.Err.Error() != tt.err {
+			t.Errorf("%d. unexpected error: %s", i, result.Err)
 		}
 	}
 }
