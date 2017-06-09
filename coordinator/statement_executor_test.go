@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/internal"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/uber-go/zap"
@@ -290,7 +292,7 @@ func DefaultQueryExecutor() *QueryExecutor {
 }
 
 // ExecuteQuery parses query and executes against the database.
-func (e *QueryExecutor) ExecuteQuery(query, database string, chunkSize int) <-chan *influxql.Result {
+func (e *QueryExecutor) ExecuteQuery(query, database string, chunkSize int) <-chan *influxql.ResultSet {
 	return e.QueryExecutor.ExecuteQuery(MustParseQuery(query), influxql.ExecutionOptions{
 		Database:  database,
 		ChunkSize: chunkSize,
@@ -420,13 +422,25 @@ func MustParseQuery(s string) *influxql.Query {
 	return q
 }
 
+type mockResponseWriter struct {
+	Results []*influxql.Result
+}
+
+func (w *mockResponseWriter) Header() http.Header       { return make(http.Header) }
+func (w *mockResponseWriter) Write([]byte) (int, error) { return 0, nil }
+func (w *mockResponseWriter) WriteHeader(int)           {}
+
+func (w *mockResponseWriter) WriteResponse(resp httpd.Response) (int, error) {
+	w.Results = append(w.Results, resp.Results...)
+	return 0, nil
+}
+
 // ReadAllResults reads all results from c and returns as a slice.
-func ReadAllResults(c <-chan *influxql.Result) []*influxql.Result {
-	var a []*influxql.Result
-	for result := range c {
-		a = append(a, result)
-	}
-	return a
+func ReadAllResults(c <-chan *influxql.ResultSet) []*influxql.Result {
+	rw := mockResponseWriter{}
+	emitter := httpd.Emitter{}
+	emitter.Emit(&rw, c)
+	return rw.Results
 }
 
 // FloatIterator is a represents an iterator that reads from a slice.
