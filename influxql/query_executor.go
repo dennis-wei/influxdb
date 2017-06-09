@@ -135,6 +135,19 @@ func (ctx *ExecutionContext) Send(result *Result) error {
 	return nil
 }
 
+func (ctx *ExecutionContext) Error(err error) bool {
+	select {
+	case <-ctx.AbortCh:
+		return false
+	case ctx.Results <- &ResultSet{ID: ctx.StatementID, Error: err}:
+		return true
+	}
+}
+
+func (ctx *ExecutionContext) Errorf(format string, a ...interface{}) bool {
+	return ctx.Error(fmt.Errorf(format, a...))
+}
+
 // StatementExecutor executes a statement within the QueryExecutor.
 type StatementExecutor interface {
 	// ExecuteStatement executes a statement. Results should be sent to the
@@ -217,7 +230,7 @@ func (e *QueryExecutor) ExecuteQuery(query *Query, opt ExecutionOptions, closing
 
 func (e *QueryExecutor) executeQuery(query *Query, opt ExecutionOptions, closing <-chan struct{}, results chan *ResultSet) {
 	defer close(results)
-	defer e.recover(query, results)
+	defer e.recover(query, results, opt.AbortCh)
 
 	atomic.AddInt64(&e.stats.ActiveQueries, 1)
 	atomic.AddInt64(&e.stats.ExecutedQueries, 1)
@@ -282,9 +295,7 @@ LOOP:
 						case "_tags":
 							command = "SHOW TAG VALUES"
 						}
-						results <- &ResultSet{
-							Error: fmt.Errorf("unable to use system source '%s': use %s instead", s.Name, command),
-						}
+						ctx.Errorf("unable to use system source '%s': use %s instead", s.Name, command)
 						break LOOP
 					}
 				}
@@ -295,7 +306,7 @@ LOOP:
 		// This can occur on meta read statements which convert to SELECT statements.
 		newStmt, err := RewriteStatement(stmt)
 		if err != nil {
-			results <- &ResultSet{Error: err}
+			ctx.Error(err)
 			break
 		}
 		stmt = newStmt
@@ -303,10 +314,8 @@ LOOP:
 		// Normalize each statement if possible.
 		if normalizer, ok := e.StatementExecutor.(StatementNormalizer); ok {
 			if err := normalizer.NormalizeStatement(stmt, defaultDB); err != nil {
-				select {
-				case <-ctx.AbortCh:
+				if ok := ctx.Error(err); !ok {
 					return
-				case results <- &ResultSet{Error: err}:
 				}
 				break
 			}
@@ -329,10 +338,8 @@ LOOP:
 
 		// Send an error for this result if it failed for some reason.
 		if err != nil {
-			select {
-			case <-ctx.AbortCh:
+			if ok := ctx.Error(err); !ok {
 				return
-			case results <- &ResultSet{Error: err}:
 			}
 			// Stop after the first error.
 			break
@@ -356,20 +363,23 @@ LOOP:
 
 	// Send error results for any statements which were not executed.
 	for ; i < len(query.Statements)-1; i++ {
-		select {
-		case <-ctx.AbortCh:
+		ctx.StatementID = i
+		if ok := ctx.Error(ErrNotExecuted); !ok {
 			return
-		case results <- &ResultSet{ID: i, Error: ErrNotExecuted}:
 		}
 	}
 }
 
-func (e *QueryExecutor) recover(query *Query, results chan *ResultSet) {
+func (e *QueryExecutor) recover(query *Query, results chan *ResultSet, abortCh <-chan struct{}) {
 	if err := recover(); err != nil {
 		e.Logger.Error(fmt.Sprintf("%s [panic:%s] %s", query.String(), err, debug.Stack()))
-		results <- &ResultSet{
+		result := &ResultSet{
 			ID:    -1,
 			Error: fmt.Errorf("%s [panic:%s]", query.String(), err),
+		}
+		select {
+		case <-abortCh:
+		case results <- result:
 		}
 	}
 }
