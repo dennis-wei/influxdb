@@ -2757,8 +2757,7 @@ type floatIteratorMapper struct {
 }
 
 func newFloatIteratorMapper(itrs []Iterator, driver IteratorMap, fields []IteratorMap, opt IteratorOptions) *floatIteratorMapper {
-	e := NewEmitter(itrs, opt.Ascending, 0)
-	e.OmitTime = true
+	e := NewEmitter(itrs, opt.Ascending)
 	return &floatIteratorMapper{
 		e:      e,
 		buf:    make([]interface{}, len(itrs)),
@@ -2771,7 +2770,7 @@ func newFloatIteratorMapper(itrs []Iterator, driver IteratorMap, fields []Iterat
 }
 
 func (itr *floatIteratorMapper) Next() (*FloatPoint, error) {
-	t, name, tags, err := itr.e.loadBuf()
+	t, name, tags, err := itr.e.LoadBuf()
 	if err != nil || t == ZeroTime {
 		return nil, err
 	}
@@ -2779,7 +2778,7 @@ func (itr *floatIteratorMapper) Next() (*FloatPoint, error) {
 	itr.point.Name = name
 	itr.point.Tags = tags
 
-	itr.e.readInto(t, name, tags, itr.buf)
+	itr.e.ReadInto(t, name, tags, itr.buf)
 	if itr.driver != nil {
 		if v := itr.driver.Value(tags, itr.buf); v != nil {
 			if v, ok := v.(float64); ok {
@@ -5682,8 +5681,7 @@ type integerIteratorMapper struct {
 }
 
 func newIntegerIteratorMapper(itrs []Iterator, driver IteratorMap, fields []IteratorMap, opt IteratorOptions) *integerIteratorMapper {
-	e := NewEmitter(itrs, opt.Ascending, 0)
-	e.OmitTime = true
+	e := NewEmitter(itrs, opt.Ascending)
 	return &integerIteratorMapper{
 		e:      e,
 		buf:    make([]interface{}, len(itrs)),
@@ -5696,7 +5694,7 @@ func newIntegerIteratorMapper(itrs []Iterator, driver IteratorMap, fields []Iter
 }
 
 func (itr *integerIteratorMapper) Next() (*IntegerPoint, error) {
-	t, name, tags, err := itr.e.loadBuf()
+	t, name, tags, err := itr.e.LoadBuf()
 	if err != nil || t == ZeroTime {
 		return nil, err
 	}
@@ -5704,7 +5702,7 @@ func (itr *integerIteratorMapper) Next() (*IntegerPoint, error) {
 	itr.point.Name = name
 	itr.point.Tags = tags
 
-	itr.e.readInto(t, name, tags, itr.buf)
+	itr.e.ReadInto(t, name, tags, itr.buf)
 	if itr.driver != nil {
 		if v := itr.driver.Value(tags, itr.buf); v != nil {
 			if v, ok := v.(int64); ok {
@@ -8593,8 +8591,7 @@ type stringIteratorMapper struct {
 }
 
 func newStringIteratorMapper(itrs []Iterator, driver IteratorMap, fields []IteratorMap, opt IteratorOptions) *stringIteratorMapper {
-	e := NewEmitter(itrs, opt.Ascending, 0)
-	e.OmitTime = true
+	e := NewEmitter(itrs, opt.Ascending)
 	return &stringIteratorMapper{
 		e:      e,
 		buf:    make([]interface{}, len(itrs)),
@@ -8607,7 +8604,7 @@ func newStringIteratorMapper(itrs []Iterator, driver IteratorMap, fields []Itera
 }
 
 func (itr *stringIteratorMapper) Next() (*StringPoint, error) {
-	t, name, tags, err := itr.e.loadBuf()
+	t, name, tags, err := itr.e.LoadBuf()
 	if err != nil || t == ZeroTime {
 		return nil, err
 	}
@@ -8615,7 +8612,7 @@ func (itr *stringIteratorMapper) Next() (*StringPoint, error) {
 	itr.point.Name = name
 	itr.point.Tags = tags
 
-	itr.e.readInto(t, name, tags, itr.buf)
+	itr.e.ReadInto(t, name, tags, itr.buf)
 	if itr.driver != nil {
 		if v := itr.driver.Value(tags, itr.buf); v != nil {
 			if v, ok := v.(string); ok {
@@ -11504,8 +11501,7 @@ type booleanIteratorMapper struct {
 }
 
 func newBooleanIteratorMapper(itrs []Iterator, driver IteratorMap, fields []IteratorMap, opt IteratorOptions) *booleanIteratorMapper {
-	e := NewEmitter(itrs, opt.Ascending, 0)
-	e.OmitTime = true
+	e := NewEmitter(itrs, opt.Ascending)
 	return &booleanIteratorMapper{
 		e:      e,
 		buf:    make([]interface{}, len(itrs)),
@@ -11518,7 +11514,7 @@ func newBooleanIteratorMapper(itrs []Iterator, driver IteratorMap, fields []Iter
 }
 
 func (itr *booleanIteratorMapper) Next() (*BooleanPoint, error) {
-	t, name, tags, err := itr.e.loadBuf()
+	t, name, tags, err := itr.e.LoadBuf()
 	if err != nil || t == ZeroTime {
 		return nil, err
 	}
@@ -11526,7 +11522,7 @@ func (itr *booleanIteratorMapper) Next() (*BooleanPoint, error) {
 	itr.point.Name = name
 	itr.point.Tags = tags
 
-	itr.e.readInto(t, name, tags, itr.buf)
+	itr.e.ReadInto(t, name, tags, itr.buf)
 	if itr.driver != nil {
 		if v := itr.driver.Value(tags, itr.buf); v != nil {
 			if v, ok := v.(bool); ok {

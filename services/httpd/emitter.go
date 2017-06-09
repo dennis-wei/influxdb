@@ -34,6 +34,11 @@ RESULTS:
 		}
 
 		for series := range result.SeriesCh() {
+			if series.Err != nil {
+				r.Err = series.Err
+				continue RESULTS
+			}
+
 			s := &models.Row{
 				Name:    series.Name,
 				Tags:    series.Tags.KeyValues(),
@@ -85,6 +90,16 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 				{
 					StatementID: result.ID,
 					Messages:    messages,
+				},
+			}})
+			continue
+		} else if series.Err != nil {
+			// An error occurred while processing the result.
+			w.WriteResponse(Response{Results: []*influxql.Result{
+				{
+					StatementID: result.ID,
+					Messages:    messages,
+					Err:         series.Err,
 				},
 			}})
 			continue

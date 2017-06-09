@@ -26,6 +26,11 @@ var (
 	// ErrQueryAborted is an error returned when the query is aborted.
 	ErrQueryAborted = errors.New("query aborted")
 
+	// ErrQueryCanceled is an error that signals the query was canceled during
+	// execution by the query engine itself due to another error that was
+	// already reported. This error should never be emitted to the user.
+	ErrQueryCanceled = errors.New("query canceled")
+
 	// ErrQueryEngineShutdown is an error sent when the query cannot be
 	// created because the query engine was shutdown.
 	ErrQueryEngineShutdown = errors.New("query engine shutdown")
@@ -347,6 +352,12 @@ LOOP:
 			if qerr := task.Error(); qerr != nil {
 				err = qerr
 			}
+		} else if err == ErrQueryCanceled {
+			// The query was canceled while it was running so the result has
+			// already been sent and the error has already been reported
+			// through a series or a row. Break out of the main loop so we can
+			// report ErrNotExecuted for the remaining statements.
+			break
 		}
 
 		// Send an error for this result if it failed for some reason.

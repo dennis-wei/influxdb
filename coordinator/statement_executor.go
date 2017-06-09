@@ -53,12 +53,9 @@ type StatementExecutor struct {
 // ExecuteStatement executes the given statement with the given execution context.
 func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
 	// Select statements are handled separately so that they can be streamed.
-	/*
-		if stmt, ok := stmt.(*influxql.SelectStatement); ok {
-			//return e.executeSelectStatement(stmt, &ctx)
-			return nil
-		}
-	*/
+	if stmt, ok := stmt.(*influxql.SelectStatement); ok {
+		return e.executeSelectStatement(stmt, &ctx)
+	}
 
 	switch stmt := stmt.(type) {
 	case *influxql.AlterRetentionPolicyStatement:
@@ -482,99 +479,156 @@ func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPassw
 	return e.MetaClient.UpdateUser(q.Name, q.Password)
 }
 
-/*
 func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *influxql.ExecutionContext) error {
 	itrs, stmt, err := e.createIterators(stmt, ctx)
 	if err != nil {
 		return err
 	}
 
-	// Generate a row emitter from the iterator set.
-	em := influxql.NewEmitter(itrs, stmt.TimeAscending(), ctx.ChunkSize)
-	em.Columns = stmt.ColumnNames()
-	if stmt.Location != nil {
-		em.Location = stmt.Location
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
 	}
-	em.OmitTime = stmt.OmitTime
+	defer result.Close()
+
+	// Set the columns of the result to the statement columns.
+	columns := stmt.ColumnNames()
+	result = result.WithColumns(columns...)
+
+	// Generate a row emitter from the iterator set.
+	em := influxql.NewEmitter(itrs, stmt.TimeAscending())
 	defer em.Close()
 
-	// Emit rows to the results channel.
-	var writeN int64
-	var emitted bool
-
-	var pointsWriter *BufferedPointsWriter
-	if stmt.Target != nil {
-		pointsWriter = NewBufferedPointsWriter(e.PointsWriter, stmt.Target.Measurement.Database, stmt.Target.Measurement.RetentionPolicy, 10000)
+	// Retrieve the time zone location. Default to using UTC.
+	loc := time.UTC
+	if stmt.Location != nil {
+		loc = stmt.Location
 	}
 
+	var series *influxql.Series
 	for {
-		row, partial, err := em.Emit()
+		// Fill buffer. Close the series if no more points remain.
+		t, name, tags, err := em.LoadBuf()
 		if err != nil {
-			return err
-		} else if row == nil {
-			// Check if the query was interrupted while emitting.
-			select {
-			case <-ctx.InterruptCh:
-				return influxql.ErrQueryInterrupted
-			default:
+			// An error occurred while reading the iterators. If we are in the
+			// middle of processing a series, assume the error comes from
+			// reading the series. If it has come before we have created any
+			// series, send the error to the result itself.
+			if series != nil {
+				series.Error(err)
+				series.Close()
+			} else {
+				result.Error(err)
 			}
-			break
+			return influxql.ErrQueryCanceled
+		} else if t == influxql.ZeroTime {
+			if series != nil {
+				series.Close()
+			}
+			return nil
 		}
 
-		// Write points back into system for INTO statements.
+		// Read next set of values from all iterators at a given time/name/tags.
+		var values []interface{}
+		if stmt.OmitTime {
+			values = make([]interface{}, len(columns))
+			em.ReadInto(t, name, tags, values)
+		} else {
+			values = make([]interface{}, len(columns)+1)
+			values[0] = time.Unix(0, t).In(loc)
+			em.ReadInto(t, name, tags, values[1:])
+		}
+
+		if series == nil {
+			s, ok := result.CreateSeriesWithTags(name, tags)
+			if !ok {
+				return influxql.ErrQueryAborted
+			}
+			series = s
+		} else if series.Name != name || !series.Tags.Equals(&tags) {
+			series.Close()
+			s, ok := result.CreateSeriesWithTags(name, tags)
+			if !ok {
+				return influxql.ErrQueryAborted
+			}
+			series = s
+		}
+
+		if ok := series.Emit(values); !ok {
+			series.Close()
+			return influxql.ErrQueryAborted
+		}
+	}
+
+	/*
+		// Emit rows to the results channel.
+		var writeN int64
+		var emitted bool
+
+		var pointsWriter *BufferedPointsWriter
 		if stmt.Target != nil {
-			if err := e.writeInto(pointsWriter, stmt, row); err != nil {
+			pointsWriter = NewBufferedPointsWriter(e.PointsWriter, stmt.Target.Measurement.Database, stmt.Target.Measurement.RetentionPolicy, 10000)
+		}
+
+		for {
+			row, partial, err := em.Emit()
+			if err != nil {
+				return err
+			} else if row == nil {
+				// Check if the query was interrupted while emitting.
+				select {
+				case <-ctx.InterruptCh:
+					return influxql.ErrQueryInterrupted
+				default:
+				}
+				break
+			}
+
+			// Write points back into system for INTO statements.
+			if stmt.Target != nil {
+				if err := e.writeInto(pointsWriter, stmt, row); err != nil {
+					return err
+				}
+				writeN += int64(len(row.Values))
+				continue
+			}
+
+			result := &influxql.Result{
+				StatementID: ctx.StatementID,
+				Series:      []*models.Row{row},
+				Partial:     partial,
+			}
+
+			// Send results or exit if closing.
+			if err := ctx.Send(result); err != nil {
 				return err
 			}
-			writeN += int64(len(row.Values))
-			continue
+
+			emitted = true
 		}
 
-		result := &influxql.Result{
-			StatementID: ctx.StatementID,
-			Series:      []*models.Row{row},
-			Partial:     partial,
+		// Flush remaining points and emit write count if an INTO statement.
+		if stmt.Target != nil {
+			if err := pointsWriter.Flush(); err != nil {
+				return err
+			}
+
+			var messages []*influxql.Message
+			if ctx.ReadOnly {
+				messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+			}
+
+			return ctx.Send(&influxql.Result{
+				StatementID: ctx.StatementID,
+				Messages:    messages,
+				Series: []*models.Row{{
+					Name:    "result",
+					Columns: []string{"time", "written"},
+					Values:  [][]interface{}{{time.Unix(0, 0).UTC(), writeN}},
+				}},
+			})
 		}
-
-		// Send results or exit if closing.
-		if err := ctx.Send(result); err != nil {
-			return err
-		}
-
-		emitted = true
-	}
-
-	// Flush remaining points and emit write count if an INTO statement.
-	if stmt.Target != nil {
-		if err := pointsWriter.Flush(); err != nil {
-			return err
-		}
-
-		var messages []*influxql.Message
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
-		}
-
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-			Messages:    messages,
-			Series: []*models.Row{{
-				Name:    "result",
-				Columns: []string{"time", "written"},
-				Values:  [][]interface{}{{time.Unix(0, 0).UTC(), writeN}},
-			}},
-		})
-	}
-
-	// Always emit at least one result.
-	if !emitted {
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-			Series:      make([]*models.Row, 0),
-		})
-	}
-
-	return nil
+	*/
 }
 
 func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx *influxql.ExecutionContext) ([]influxql.Iterator, *influxql.SelectStatement, error) {
@@ -662,7 +716,6 @@ func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx 
 	}
 	return itrs, stmt, nil
 }
-*/
 
 func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
