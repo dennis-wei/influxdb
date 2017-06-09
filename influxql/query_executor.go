@@ -122,16 +122,29 @@ type ExecutionContext struct {
 
 // Send sends a Result to the Results channel and will exit if the query has
 // been interrupted or aborted.
-func (ctx *ExecutionContext) Send(result *Result) error {
-	/*
-		select {
-		case <-ctx.InterruptCh:
-			return ErrQueryInterrupted
-		case <-ctx.AbortCh:
-			return ErrQueryAborted
-		case ctx.Results <- result:
-		}
-	*/
+func (ctx *ExecutionContext) CreateResult(columns []string, messages ...*Message) (*ResultSet, error) {
+	result := &ResultSet{
+		ID:       ctx.StatementID,
+		Messages: messages,
+		Columns:  columns,
+		AbortCh:  ctx.AbortCh,
+	}
+	select {
+	case <-ctx.InterruptCh:
+		return nil, ErrQueryInterrupted
+	case <-ctx.AbortCh:
+		return nil, ErrQueryAborted
+	case ctx.Results <- result.Init():
+		return result, nil
+	}
+}
+
+func (ctx *ExecutionContext) SendMessages(messages []*Message) error {
+	result, err := ctx.CreateResult(nil, messages...)
+	if err != nil {
+		return err
+	}
+	result.Close()
 	return nil
 }
 
