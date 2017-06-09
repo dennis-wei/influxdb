@@ -25,58 +25,6 @@ func (e *Emitter) Close() error {
 	return Iterators(e.itrs).Close()
 }
 
-/*
-// Emit returns the next row from the iterators.
-func (e *Emitter) Emit() (*models.Row, bool, error) {
-	// Immediately end emission if there are no iterators.
-	if len(e.itrs) == 0 {
-		return nil, false, nil
-	}
-
-	// Continually read from iterators until they are exhausted.
-	for {
-		// Fill buffer. Return row if no more points remain.
-		t, name, tags, err := e.loadBuf()
-		if err != nil {
-			return nil, false, err
-		} else if t == ZeroTime {
-			row := e.row
-			e.row = nil
-			return row, false, nil
-		}
-
-		// Read next set of values from all iterators at a given time/name/tags.
-		// If no values are returned then return row.
-		values := e.readAt(t, name, tags)
-		if values == nil {
-			row := e.row
-			e.row = nil
-			return row, false, nil
-		}
-
-		// If there's no row yet then create one.
-		// If the name and tags match the existing row, append to that row if
-		// the number of values doesn't exceed the chunk size.
-		// Otherwise return existing row and add values to next emitted row.
-		if e.row == nil {
-			e.createRow(name, tags, values)
-		} else if e.row.Name == name && e.tags.Equals(&tags) {
-			if e.chunkSize > 0 && len(e.row.Values) >= e.chunkSize {
-				row := e.row
-				row.Partial = true
-				e.createRow(name, tags, values)
-				return row, true, nil
-			}
-			e.row.Values = append(e.row.Values, values)
-		} else {
-			row := e.row
-			e.createRow(name, tags, values)
-			return row, true, nil
-		}
-	}
-}
-*/
-
 // LoadBuf reads in points into empty buffer slots.
 // Returns the next time/name/tags to emit for.
 func (e *Emitter) LoadBuf() (t int64, name string, tags Tags, err error) {
