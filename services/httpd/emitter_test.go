@@ -12,11 +12,9 @@ import (
 )
 
 func EmitTestResults(results chan *influxql.ResultSet) {
-	result := &influxql.ResultSet{
-		ID:      0,
-		Columns: []string{"time", "value"},
-	}
+	result := &influxql.ResultSet{ID: 0}
 	results <- result.Init()
+	result = result.WithColumns("time", "value")
 
 	series, _ := result.CreateSeriesWithTags("cpu",
 		influxql.NewTags(map[string]string{"host": "server01"}))
@@ -31,11 +29,9 @@ func EmitTestResults(results chan *influxql.ResultSet) {
 	series.Close()
 	result.Close()
 
-	result = &influxql.ResultSet{
-		ID:      1,
-		Columns: []string{"name"},
-	}
+	result = &influxql.ResultSet{ID: 1}
 	results <- result.Init()
+	result = result.WithColumns("name")
 	close(results)
 
 	series, _ = result.CreateSeries("databases")
