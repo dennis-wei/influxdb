@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"time"
 
@@ -213,41 +214,30 @@ func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx influx
 		}
 		return ctx.Ok()
 	case *influxql.ShowContinuousQueriesStatement:
-		e.executeShowContinuousQueriesStatement(stmt, &ctx)
-		return nil
+		return e.executeShowContinuousQueriesStatement(stmt, &ctx)
 	case *influxql.ShowDatabasesStatement:
-		e.executeShowDatabasesStatement(stmt, &ctx)
-		return nil
+		return e.executeShowDatabasesStatement(stmt, &ctx)
 	case *influxql.ShowDiagnosticsStatement:
-		//e.executeShowDiagnosticsStatement(stmt, &ctx)
-		return nil
+		return e.executeShowDiagnosticsStatement(stmt, &ctx)
 	case *influxql.ShowGrantsForUserStatement:
-		//rows, err = e.executeShowGrantsForUserStatement(stmt)
-		return nil
+		return e.executeShowGrantsForUserStatement(stmt, &ctx)
 	case *influxql.ShowMeasurementsStatement:
-		//return e.executeShowMeasurementsStatement(stmt, &ctx)
-		return nil
+		return e.executeShowMeasurementsStatement(stmt, &ctx)
 	case *influxql.ShowRetentionPoliciesStatement:
-		//rows, err = e.executeShowRetentionPoliciesStatement(stmt)
-		return nil
+		return e.executeShowRetentionPoliciesStatement(stmt, &ctx)
 	case *influxql.ShowShardsStatement:
-		//rows, err = e.executeShowShardsStatement(stmt)
-		return nil
+		return e.executeShowShardsStatement(stmt, &ctx)
 	case *influxql.ShowShardGroupsStatement:
-		//rows, err = e.executeShowShardGroupsStatement(stmt)
-		return nil
+		return e.executeShowShardGroupsStatement(stmt, &ctx)
 	case *influxql.ShowStatsStatement:
-		//rows, err = e.executeShowStatsStatement(stmt)
-		return nil
+		return e.executeShowStatsStatement(stmt, &ctx)
 	case *influxql.ShowSubscriptionsStatement:
-		//rows, err = e.executeShowSubscriptionsStatement(stmt)
-		return nil
+		return e.executeShowSubscriptionsStatement(stmt, &ctx)
 	case *influxql.ShowTagValuesStatement:
 		//return e.executeShowTagValues(stmt, &ctx)
 		return nil
 	case *influxql.ShowUsersStatement:
-		//rows, err = e.executeShowUsersStatement(stmt)
-		return nil
+		return e.executeShowUsersStatement(stmt, &ctx)
 	case *influxql.SetPasswordUserStatement:
 		if err := e.executeSetPasswordUserStatement(stmt); err != nil {
 			return err
@@ -675,42 +665,43 @@ func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx 
 }
 */
 
-func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement, ctx *influxql.ExecutionContext) {
+func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
 
-	result, err := ctx.CreateResult([]string{"name", "query"})
+	result, err := ctx.CreateResult()
 	if err != nil {
-		ctx.Error(err)
-		return
+		return err
 	}
 	defer result.Close()
 
+	result = result.WithColumns("name", "query")
 	for _, di := range dis {
 		series, ok := result.CreateSeries(di.Name)
 		if !ok {
-			return
+			return influxql.ErrQueryAborted
 		}
 		for _, cqi := range di.ContinuousQueries {
 			series.Emit([]interface{}{cqi.Name, cqi.Query})
 		}
 		series.Close()
 	}
+	return nil
 }
 
-func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *influxql.ExecutionContext) {
+func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
 	a := ctx.ExecutionOptions.Authorizer
 
-	result, err := ctx.CreateResult([]string{"name"})
+	result, err := ctx.CreateResult()
 	if err != nil {
-		ctx.Error(err)
-		return
+		return err
 	}
 	defer result.Close()
 
+	result = result.WithColumns("name")
 	series, ok := result.CreateSeries("databases")
 	if !ok {
-		return
+		return influxql.ErrQueryAborted
 	}
 	defer series.Close()
 
@@ -720,14 +711,13 @@ func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDataba
 			series.Emit([]interface{}{di.Name})
 		}
 	}
+	return nil
 }
 
-/*
-func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement, ctx *influxql.ExecutionContext) {
+func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement, ctx *influxql.ExecutionContext) error {
 	diags, err := e.Monitor.Diagnostics()
 	if err != nil {
-		ctx.Error(err)
-		return
+		return err
 	}
 
 	// Get a sorted list of diagnostics keys.
@@ -737,33 +727,53 @@ func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowD
 	}
 	sort.Strings(sortedKeys)
 
-	rows := make([]*models.Row, 0, len(diags))
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
 	for _, k := range sortedKeys {
 		if stmt.Module != "" && k != stmt.Module {
 			continue
 		}
 
-		row := &models.Row{Name: k}
+		series, ok := result.WithColumns(diags[k].Columns...).CreateSeries(k)
+		if !ok {
+			return influxql.ErrQueryAborted
+		}
 
-		row.Columns = diags[k].Columns
-		row.Values = diags[k].Rows
-		rows = append(rows, row)
+		for _, row := range diags[k].Rows {
+			series.Emit(row)
+		}
+		series.Close()
 	}
-	return rows, nil
+	return nil
 }
 
-/*
-func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement, ctx *influxql.ExecutionContext) error {
 	priv, err := e.MetaClient.UserPrivileges(q.Name)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	row := &models.Row{Columns: []string{"database", "privilege"}}
-	for d, p := range priv {
-		row.Values = append(row.Values, []interface{}{d, p.String()})
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
 	}
-	return []*models.Row{row}, nil
+	defer result.Close()
+
+	result = result.WithColumns("database", "privilege")
+	series, ok := result.CreateSeries("")
+	if !ok {
+		return influxql.ErrQueryAborted
+	}
+	defer series.Close()
+
+	for d, p := range priv {
+		series.Emit([]interface{}{d, p.String()})
+	}
+	return nil
 }
 
 func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMeasurementsStatement, ctx *influxql.ExecutionContext) error {
@@ -772,11 +782,8 @@ func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMea
 	}
 
 	names, err := e.TSDBStore.MeasurementNames(q.Database, q.Condition)
-	if err != nil || len(names) == 0 {
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-			Err:         err,
-		})
+	if err != nil {
+		return err
 	}
 
 	if q.Offset > 0 {
@@ -793,50 +800,73 @@ func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMea
 		}
 	}
 
-	values := make([][]interface{}, len(names))
-	for i, name := range names {
-		values[i] = []interface{}{string(name)}
+	if len(names) == 0 {
+		return ctx.Ok()
 	}
 
-	if len(values) == 0 {
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-		})
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
 	}
+	defer result.Close()
 
-	return ctx.Send(&influxql.Result{
-		StatementID: ctx.StatementID,
-		Series: []*models.Row{{
-			Name:    "measurements",
-			Columns: []string{"name"},
-			Values:  values,
-		}},
-	})
+	result = result.WithColumns("name")
+	series, ok := result.CreateSeries("measurements")
+	if !ok {
+		return influxql.ErrQueryAborted
+	}
+	defer series.Close()
+
+	for _, name := range names {
+		series.Emit([]interface{}{string(name)})
+	}
+	return nil
 }
 
-func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement, ctx *influxql.ExecutionContext) error {
 	if q.Database == "" {
-		return nil, ErrDatabaseNameRequired
+		return ErrDatabaseNameRequired
 	}
 
 	di := e.MetaClient.Database(q.Database)
 	if di == nil {
-		return nil, influxdb.ErrDatabaseNotFound(q.Database)
+		return influxdb.ErrDatabaseNotFound(q.Database)
 	}
 
-	row := &models.Row{Columns: []string{"name", "duration", "shardGroupDuration", "replicaN", "default"}}
-	for _, rpi := range di.RetentionPolicies {
-		row.Values = append(row.Values, []interface{}{rpi.Name, rpi.Duration.String(), rpi.ShardGroupDuration.String(), rpi.ReplicaN, di.DefaultRetentionPolicy == rpi.Name})
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
 	}
-	return []*models.Row{row}, nil
+	defer result.Close()
+
+	result = result.WithColumns("name", "duration", "shardGroupDuration", "replicaN", "default")
+	series, ok := result.CreateSeries("")
+	if !ok {
+		return influxql.ErrQueryAborted
+	}
+
+	for _, rpi := range di.RetentionPolicies {
+		series.Emit([]interface{}{rpi.Name, rpi.Duration.String(), rpi.ShardGroupDuration.String(), rpi.ReplicaN, di.DefaultRetentionPolicy == rpi.Name})
+	}
+	return nil
 }
 
-func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShardsStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShardsStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
 
-	rows := []*models.Row{}
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
+	result = result.WithColumns("id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time", "owners")
 	for _, di := range dis {
-		row := &models.Row{Columns: []string{"id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time", "owners"}, Name: di.Name}
+		series, ok := result.CreateSeries(di.Name)
+		if !ok {
+			return influxql.ErrQueryAborted
+		}
+
 		for _, rpi := range di.RetentionPolicies {
 			for _, sgi := range rpi.ShardGroups {
 				// Shards associated with deleted shard groups are effectively deleted.
@@ -851,7 +881,7 @@ func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShards
 						ownerIDs[i] = owner.NodeID
 					}
 
-					row.Values = append(row.Values, []interface{}{
+					series.Emit([]interface{}{
 						si.ID,
 						di.Name,
 						rpi.Name,
@@ -864,15 +894,27 @@ func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShards
 				}
 			}
 		}
-		rows = append(rows, row)
+		series.Close()
 	}
-	return rows, nil
+	return nil
 }
 
-func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowShardGroupsStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowShardGroupsStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
 
-	row := &models.Row{Columns: []string{"id", "database", "retention_policy", "start_time", "end_time", "expiry_time"}, Name: "shard groups"}
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
+	result = result.WithColumns("id", "database", "retention_policy", "start_time", "end_time", "expiry_time")
+	series, ok := result.CreateSeries("shard groups")
+	if !ok {
+		return influxql.ErrQueryAborted
+	}
+	defer series.Close()
+
 	for _, di := range dis {
 		for _, rpi := range di.RetentionPolicies {
 			for _, sgi := range rpi.ShardGroups {
@@ -882,7 +924,7 @@ func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowS
 					continue
 				}
 
-				row.Values = append(row.Values, []interface{}{
+				series.Emit([]interface{}{
 					sgi.ID,
 					di.Name,
 					rpi.Name,
@@ -893,52 +935,77 @@ func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowS
 			}
 		}
 	}
-
-	return []*models.Row{row}, nil
+	return nil
 }
 
-func (e *StatementExecutor) executeShowStatsStatement(stmt *influxql.ShowStatsStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowStatsStatement(stmt *influxql.ShowStatsStatement, ctx *influxql.ExecutionContext) error {
 	stats, err := e.Monitor.Statistics(nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var rows []*models.Row
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
 	for _, stat := range stats {
 		if stmt.Module != "" && stat.Name != stmt.Module {
 			continue
 		}
-		row := &models.Row{Name: stat.Name, Tags: stat.Tags}
 
-		values := make([]interface{}, 0, len(stat.Values))
-		for _, k := range stat.ValueNames() {
-			row.Columns = append(row.Columns, k)
-			values = append(values, stat.Values[k])
+		result := result.WithColumns(stat.ValueNames()...)
+		series, ok := result.CreateSeriesWithTags(stat.Name, influxql.NewTags(stat.Tags))
+		if !ok {
+			return influxql.ErrQueryAborted
 		}
-		row.Values = [][]interface{}{values}
-		rows = append(rows, row)
+
+		row := make([]interface{}, 0, len(series.Columns))
+		for _, k := range series.Columns {
+			row = append(row, stat.Values[k])
+		}
+		series.Emit(row)
+		series.Close()
 	}
-	return rows, nil
+	return nil
 }
 
-func (e *StatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.ShowSubscriptionsStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.ShowSubscriptionsStatement, ctx *influxql.ExecutionContext) error {
 	dis := e.MetaClient.Databases()
 
-	rows := []*models.Row{}
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
+	result = result.WithColumns("retention_policy", "name", "mode", "destinations")
 	for _, di := range dis {
-		row := &models.Row{Columns: []string{"retention_policy", "name", "mode", "destinations"}, Name: di.Name}
+		var series *influxql.Series
 		for _, rpi := range di.RetentionPolicies {
 			for _, si := range rpi.Subscriptions {
-				row.Values = append(row.Values, []interface{}{rpi.Name, si.Name, si.Mode, si.Destinations})
+				// Lazily initialize the series so we don't emit a series that
+				// has no subscriptions.
+				if series == nil {
+					s, ok := result.CreateSeries(di.Name)
+					if !ok {
+						return influxql.ErrQueryAborted
+					}
+					series = s
+				}
+				series.Emit([]interface{}{rpi.Name, si.Name, si.Mode, si.Destinations})
 			}
 		}
-		if len(row.Values) > 0 {
-			rows = append(rows, row)
+
+		if series != nil {
+			series.Close()
 		}
 	}
-	return rows, nil
+	return nil
 }
 
+/*
 func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatement, ctx *influxql.ExecutionContext) error {
 	if q.Database == "" {
 		return ErrDatabaseNameRequired
@@ -1000,15 +1067,27 @@ func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatem
 	}
 	return nil
 }
-
-func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement) (models.Rows, error) {
-	row := &models.Row{Columns: []string{"user", "admin"}}
-	for _, ui := range e.MetaClient.Users() {
-		row.Values = append(row.Values, []interface{}{ui.Name, ui.Admin})
-	}
-	return []*models.Row{row}, nil
-}
 */
+
+func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement, ctx *influxql.ExecutionContext) error {
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
+	result = result.WithColumns("user", "admin")
+	series, ok := result.CreateSeries("")
+	if !ok {
+		return influxql.ErrQueryAborted
+	}
+	defer series.Close()
+
+	for _, ui := range e.MetaClient.Users() {
+		series.Emit([]interface{}{ui.Name, ui.Admin})
+	}
+	return nil
+}
 
 // BufferedPointsWriter adds buffering to a pointsWriter so that SELECT INTO queries
 // write their points to the destination in batches.

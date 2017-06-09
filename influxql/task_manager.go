@@ -78,14 +78,14 @@ func (t *TaskManager) executeKillQueryStatement(stmt *KillQueryStatement) error 
 }
 
 func (t *TaskManager) executeShowQueriesStatement(q *ShowQueriesStatement, ctx *ExecutionContext) {
-	result := &ResultSet{
-		ID:      ctx.StatementID,
-		Columns: []string{"qid", "query", "database", "duration"},
-		AbortCh: ctx.AbortCh,
+	result, err := ctx.CreateResult()
+	if err != nil {
+		ctx.Error(err)
+		return
 	}
-	ctx.Results <- result.Init()
 	defer result.Close()
 
+	result = result.WithColumns("qid", "query", "database", "duration")
 	series, ok := result.CreateSeries("")
 	if !ok {
 		return

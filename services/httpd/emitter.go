@@ -37,7 +37,7 @@ RESULTS:
 			s := &models.Row{
 				Name:    series.Name,
 				Tags:    series.Tags.KeyValues(),
-				Columns: result.Columns,
+				Columns: series.Columns,
 			}
 			r.Series = append(r.Series, s)
 
@@ -103,7 +103,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 						Series: []*models.Row{{
 							Name:    series.Name,
 							Tags:    series.Tags.KeyValues(),
-							Columns: result.Columns,
+							Columns: series.Columns,
 							Values:  values,
 							Partial: true,
 						}},
@@ -122,7 +122,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 				Series: []*models.Row{{
 					Name:    series.Name,
 					Tags:    series.Tags.KeyValues(),
-					Columns: result.Columns,
+					Columns: series.Columns,
 					Values:  values,
 				}},
 				Messages: messages,

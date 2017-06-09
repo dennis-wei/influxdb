@@ -122,11 +122,10 @@ type ExecutionContext struct {
 
 // Send sends a Result to the Results channel and will exit if the query has
 // been interrupted or aborted.
-func (ctx *ExecutionContext) CreateResult(columns []string, messages ...*Message) (*ResultSet, error) {
+func (ctx *ExecutionContext) CreateResult(messages ...*Message) (*ResultSet, error) {
 	result := &ResultSet{
 		ID:       ctx.StatementID,
 		Messages: messages,
-		Columns:  columns,
 		AbortCh:  ctx.AbortCh,
 	}
 	select {
@@ -141,7 +140,7 @@ func (ctx *ExecutionContext) CreateResult(columns []string, messages ...*Message
 
 // Ok returns a result with no content (it is immediately closed).
 func (ctx *ExecutionContext) Ok(messages ...*Message) error {
-	result, err := ctx.CreateResult(nil, messages...)
+	result, err := ctx.CreateResult(messages...)
 	if err != nil {
 		return err
 	}
