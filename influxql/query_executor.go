@@ -139,7 +139,8 @@ func (ctx *ExecutionContext) CreateResult(columns []string, messages ...*Message
 	}
 }
 
-func (ctx *ExecutionContext) SendMessages(messages []*Message) error {
+// Ok returns a result with no content (it is immediately closed).
+func (ctx *ExecutionContext) Ok(messages ...*Message) error {
 	result, err := ctx.CreateResult(nil, messages...)
 	if err != nil {
 		return err

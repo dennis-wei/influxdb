@@ -70,11 +70,11 @@ func (rs *ResultSet) Init() *ResultSet {
 	return rs
 }
 
-func (rs *ResultSet) CreateSeries(name string) (*Series, error) {
+func (rs *ResultSet) CreateSeries(name string) (*Series, bool) {
 	return rs.CreateSeriesWithTags(name, Tags{})
 }
 
-func (rs *ResultSet) CreateSeriesWithTags(name string, tags Tags) (*Series, error) {
+func (rs *ResultSet) CreateSeriesWithTags(name string, tags Tags) (*Series, bool) {
 	series := &Series{
 		Name:    name,
 		Tags:    tags,
@@ -83,9 +83,9 @@ func (rs *ResultSet) CreateSeriesWithTags(name string, tags Tags) (*Series, erro
 	}
 	select {
 	case <-rs.AbortCh:
-		return nil, ErrQueryAborted
+		return nil, false
 	case rs.seriesCh <- series:
-		return series, nil
+		return series, true
 	}
 }
 

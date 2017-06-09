@@ -379,8 +379,15 @@ func (s *Service) runContinuousQueryAndWriteResult(cq *ContinuousQuery) error {
 	if !ok {
 		panic("result channel was closed")
 	}
-	if res.Err != nil {
-		return res.Err
+	if res.Error != nil {
+		return res.Error
+	}
+
+	// Drain the result.
+	for series := range res.SeriesCh() {
+		for range series.RowCh() {
+			// Do nothing.
+		}
 	}
 	return nil
 }

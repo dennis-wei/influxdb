@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"time"
 
@@ -53,151 +52,216 @@ type StatementExecutor struct {
 // ExecuteStatement executes the given statement with the given execution context.
 func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
 	// Select statements are handled separately so that they can be streamed.
-	if stmt, ok := stmt.(*influxql.SelectStatement); ok {
-		return e.executeSelectStatement(stmt, &ctx)
-	}
+	/*
+		if stmt, ok := stmt.(*influxql.SelectStatement); ok {
+			//return e.executeSelectStatement(stmt, &ctx)
+			return nil
+		}
+	*/
 
-	var rows models.Rows
-	var messages []*influxql.Message
-	var err error
 	switch stmt := stmt.(type) {
 	case *influxql.AlterRetentionPolicyStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeAlterRetentionPolicyStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeAlterRetentionPolicyStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.CreateContinuousQueryStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeCreateContinuousQueryStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeCreateContinuousQueryStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.CreateDatabaseStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeCreateDatabaseStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeCreateDatabaseStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.CreateRetentionPolicyStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeCreateRetentionPolicyStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeCreateRetentionPolicyStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.CreateSubscriptionStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeCreateSubscriptionStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeCreateSubscriptionStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.CreateUserStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeCreateUserStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeCreateUserStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DeleteSeriesStatement:
-		err = e.executeDeleteSeriesStatement(stmt, ctx.Database)
+		if err := e.executeDeleteSeriesStatement(stmt, ctx.Database); err != nil {
+			return err
+		}
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropContinuousQueryStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropContinuousQueryStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropContinuousQueryStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropDatabaseStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropDatabaseStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropDatabaseStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropMeasurementStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropMeasurementStatement(stmt, ctx.Database); err != nil {
+			return err
 		}
-		err = e.executeDropMeasurementStatement(stmt, ctx.Database)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropSeriesStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropSeriesStatement(stmt, ctx.Database); err != nil {
+			return err
 		}
-		err = e.executeDropSeriesStatement(stmt, ctx.Database)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropRetentionPolicyStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropRetentionPolicyStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropRetentionPolicyStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropShardStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropShardStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropShardStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropSubscriptionStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropSubscriptionStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropSubscriptionStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.DropUserStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeDropUserStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeDropUserStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.GrantStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeGrantStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeGrantStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.GrantAdminStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeGrantAdminStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeGrantAdminStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.RevokeStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeRevokeStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeRevokeStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.RevokeAdminStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeRevokeAdminStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeRevokeAdminStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.ShowContinuousQueriesStatement:
-		rows, err = e.executeShowContinuousQueriesStatement(stmt)
+		e.executeShowContinuousQueriesStatement(stmt, &ctx)
+		return nil
 	case *influxql.ShowDatabasesStatement:
-		rows, err = e.executeShowDatabasesStatement(stmt, &ctx)
+		e.executeShowDatabasesStatement(stmt, &ctx)
+		return nil
 	case *influxql.ShowDiagnosticsStatement:
-		rows, err = e.executeShowDiagnosticsStatement(stmt)
+		//e.executeShowDiagnosticsStatement(stmt, &ctx)
+		return nil
 	case *influxql.ShowGrantsForUserStatement:
-		rows, err = e.executeShowGrantsForUserStatement(stmt)
+		//rows, err = e.executeShowGrantsForUserStatement(stmt)
+		return nil
 	case *influxql.ShowMeasurementsStatement:
-		return e.executeShowMeasurementsStatement(stmt, &ctx)
+		//return e.executeShowMeasurementsStatement(stmt, &ctx)
+		return nil
 	case *influxql.ShowRetentionPoliciesStatement:
-		rows, err = e.executeShowRetentionPoliciesStatement(stmt)
+		//rows, err = e.executeShowRetentionPoliciesStatement(stmt)
+		return nil
 	case *influxql.ShowShardsStatement:
-		rows, err = e.executeShowShardsStatement(stmt)
+		//rows, err = e.executeShowShardsStatement(stmt)
+		return nil
 	case *influxql.ShowShardGroupsStatement:
-		rows, err = e.executeShowShardGroupsStatement(stmt)
+		//rows, err = e.executeShowShardGroupsStatement(stmt)
+		return nil
 	case *influxql.ShowStatsStatement:
-		rows, err = e.executeShowStatsStatement(stmt)
+		//rows, err = e.executeShowStatsStatement(stmt)
+		return nil
 	case *influxql.ShowSubscriptionsStatement:
-		rows, err = e.executeShowSubscriptionsStatement(stmt)
+		//rows, err = e.executeShowSubscriptionsStatement(stmt)
+		return nil
 	case *influxql.ShowTagValuesStatement:
-		return e.executeShowTagValues(stmt, &ctx)
+		//return e.executeShowTagValues(stmt, &ctx)
+		return nil
 	case *influxql.ShowUsersStatement:
-		rows, err = e.executeShowUsersStatement(stmt)
+		//rows, err = e.executeShowUsersStatement(stmt)
+		return nil
 	case *influxql.SetPasswordUserStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, influxql.ReadOnlyWarning(stmt.String()))
+		if err := e.executeSetPasswordUserStatement(stmt); err != nil {
+			return err
 		}
-		err = e.executeSetPasswordUserStatement(stmt)
+		if ctx.ReadOnly {
+			return ctx.Ok(influxql.ReadOnlyWarning(stmt.String()))
+		}
+		return ctx.Ok()
 	case *influxql.ShowQueriesStatement, *influxql.KillQueryStatement:
 		// Send query related statements to the task manager.
 		return e.TaskManager.ExecuteStatement(stmt, ctx)
 	default:
 		return influxql.ErrInvalidQuery
 	}
-
-	if err != nil {
-		return err
-	}
-
-	return ctx.Send(&influxql.Result{
-		StatementID: ctx.StatementID,
-		Series:      rows,
-		Messages:    messages,
-	})
 }
 
 func (e *StatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
@@ -429,6 +493,7 @@ func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPassw
 	return e.MetaClient.UpdateUser(q.Name, q.Password)
 }
 
+/*
 func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *influxql.ExecutionContext) error {
 	itrs, stmt, err := e.createIterators(stmt, ctx)
 	if err != nil {
@@ -608,39 +673,61 @@ func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx 
 	}
 	return itrs, stmt, nil
 }
+*/
 
-func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement) (models.Rows, error) {
+func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement, ctx *influxql.ExecutionContext) {
 	dis := e.MetaClient.Databases()
 
-	rows := []*models.Row{}
-	for _, di := range dis {
-		row := &models.Row{Columns: []string{"name", "query"}, Name: di.Name}
-		for _, cqi := range di.ContinuousQueries {
-			row.Values = append(row.Values, []interface{}{cqi.Name, cqi.Query})
-		}
-		rows = append(rows, row)
+	result, err := ctx.CreateResult([]string{"name", "query"})
+	if err != nil {
+		ctx.Error(err)
+		return
 	}
-	return rows, nil
+	defer result.Close()
+
+	for _, di := range dis {
+		series, ok := result.CreateSeries(di.Name)
+		if !ok {
+			return
+		}
+		for _, cqi := range di.ContinuousQueries {
+			series.Emit([]interface{}{cqi.Name, cqi.Query})
+		}
+		series.Close()
+	}
 }
 
-func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *influxql.ExecutionContext) (models.Rows, error) {
+func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *influxql.ExecutionContext) {
 	dis := e.MetaClient.Databases()
 	a := ctx.ExecutionOptions.Authorizer
 
-	row := &models.Row{Name: "databases", Columns: []string{"name"}}
+	result, err := ctx.CreateResult([]string{"name"})
+	if err != nil {
+		ctx.Error(err)
+		return
+	}
+	defer result.Close()
+
+	series, ok := result.CreateSeries("databases")
+	if !ok {
+		return
+	}
+	defer series.Close()
+
 	for _, di := range dis {
 		// Only include databases that the user is authorized to read or write.
 		if a.AuthorizeDatabase(influxql.ReadPrivilege, di.Name) || a.AuthorizeDatabase(influxql.WritePrivilege, di.Name) {
-			row.Values = append(row.Values, []interface{}{di.Name})
+			series.Emit([]interface{}{di.Name})
 		}
 	}
-	return []*models.Row{row}, nil
 }
 
-func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement) (models.Rows, error) {
+/*
+func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement, ctx *influxql.ExecutionContext) {
 	diags, err := e.Monitor.Diagnostics()
 	if err != nil {
-		return nil, err
+		ctx.Error(err)
+		return
 	}
 
 	// Get a sorted list of diagnostics keys.
@@ -665,6 +752,7 @@ func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowD
 	return rows, nil
 }
 
+/*
 func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
 	priv, err := e.MetaClient.UserPrivileges(q.Name)
 	if err != nil {
@@ -920,6 +1008,7 @@ func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersState
 	}
 	return []*models.Row{row}, nil
 }
+*/
 
 // BufferedPointsWriter adds buffering to a pointsWriter so that SELECT INTO queries
 // write their points to the destination in batches.

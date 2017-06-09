@@ -86,8 +86,8 @@ func (t *TaskManager) executeShowQueriesStatement(q *ShowQueriesStatement, ctx *
 	ctx.Results <- result.Init()
 	defer result.Close()
 
-	series, err := result.CreateSeries("")
-	if err != nil {
+	series, ok := result.CreateSeries("")
+	if !ok {
 		return
 	}
 	defer series.Close()
