@@ -84,7 +84,7 @@ func TestQueryExecutor_KillQuery(t *testing.T) {
 	discardOutput(e.ExecuteQuery(q, influxql.ExecutionOptions{AbortCh: abort}, nil))
 
 	result := <-results
-	if result.Error != influxql.ErrQueryInterrupted {
+	if result.Err != influxql.ErrQueryInterrupted {
 		t.Errorf("unexpected error: %s", result.Err)
 	}
 }
@@ -158,7 +158,7 @@ func TestQueryExecutor_ShowQueries(t *testing.T) {
 	// Should only retrieve one row from the series.
 	rows := make([][]interface{}, 0, 1)
 	for row := range series.RowCh() {
-		if row.Error != nil {
+		if row.Err != nil {
 			t.Errorf("unexpected error: %s", result.Err)
 		}
 		rows = append(rows, row.Values)
