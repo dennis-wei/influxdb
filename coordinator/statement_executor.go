@@ -234,8 +234,7 @@ func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx influx
 	case *influxql.ShowSubscriptionsStatement:
 		return e.executeShowSubscriptionsStatement(stmt, &ctx)
 	case *influxql.ShowTagValuesStatement:
-		//return e.executeShowTagValues(stmt, &ctx)
-		return nil
+		return e.executeShowTagValues(stmt, &ctx)
 	case *influxql.ShowUsersStatement:
 		return e.executeShowUsersStatement(stmt, &ctx)
 	case *influxql.SetPasswordUserStatement:
@@ -1005,7 +1004,6 @@ func (e *StatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.Sho
 	return nil
 }
 
-/*
 func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatement, ctx *influxql.ExecutionContext) error {
 	if q.Database == "" {
 		return ErrDatabaseNameRequired
@@ -1013,13 +1011,16 @@ func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatem
 
 	tagValues, err := e.TSDBStore.TagValues(q.Database, q.Condition)
 	if err != nil {
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-			Err:         err,
-		})
+		return err
 	}
 
-	emitted := false
+	result, err := ctx.CreateResult()
+	if err != nil {
+		return err
+	}
+	defer result.Close()
+
+	result = result.WithColumns("key", "value")
 	for _, m := range tagValues {
 		values := m.Values
 
@@ -1041,33 +1042,17 @@ func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatem
 			continue
 		}
 
-		row := &models.Row{
-			Name:    m.Measurement,
-			Columns: []string{"key", "value"},
-			Values:  make([][]interface{}, len(values)),
+		series, ok := result.CreateSeries(m.Measurement)
+		if !ok {
+			return influxql.ErrQueryAborted
 		}
-		for i, v := range values {
-			row.Values[i] = []interface{}{v.Key, v.Value}
+		for _, v := range values {
+			series.Emit([]interface{}{v.Key, v.Value})
 		}
-
-		if err := ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-			Series:      []*models.Row{row},
-		}); err != nil {
-			return err
-		}
-		emitted = true
-	}
-
-	// Ensure at least one result is emitted.
-	if !emitted {
-		return ctx.Send(&influxql.Result{
-			StatementID: ctx.StatementID,
-		})
+		series.Close()
 	}
 	return nil
 }
-*/
 
 func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement, ctx *influxql.ExecutionContext) error {
 	result, err := ctx.CreateResult()
