@@ -1,0 +1,119 @@
+package httpd
+
+import (
+	"net/http"
+
+	"github.com/influxdata/influxdb/influxql"
+	"github.com/tinylib/msgp/msgp"
+)
+
+type MessagePackEmitter struct {
+	Epoch     string
+	ChunkSize int
+}
+
+func (e MessagePackEmitter) Emit(w http.ResponseWriter, results <-chan *influxql.ResultSet) error {
+	/*
+		var convertToEpoch func(row *influxql.Row)
+		if e.Epoch != "" {
+			convertToEpoch = epochConverter(e.Epoch)
+		}
+	*/
+	values := make([][]interface{}, 0, e.ChunkSize)
+
+	enc := msgp.NewWriter(w)
+	for result := range results {
+		var messages []Message
+		if len(result.Messages) > 0 {
+			messages = make([]Message, len(result.Messages))
+			for i, m := range result.Messages {
+				messages[i].Level = m.Level
+				messages[i].Text = m.Text
+			}
+		}
+		header := ResultHeader{
+			ID:       result.ID,
+			Messages: messages,
+		}
+		if result.Err != nil {
+			err := result.Err.Error()
+			header.Error = &err
+		}
+		header.EncodeMsg(enc)
+
+		for series := range result.SeriesCh() {
+			enc.WriteInt(1)
+
+			if series.Err != nil {
+				err := series.Err.Error()
+				header := SeriesError{Error: err}
+				header.EncodeMsg(enc)
+
+				enc.Flush()
+				if w, ok := w.(http.Flusher); ok {
+					w.Flush()
+				}
+				continue
+			}
+
+			header := SeriesHeader{
+				Name:    &series.Name,
+				Tags:    series.Tags.KeyValues(),
+				Columns: series.Columns,
+			}
+			header.EncodeMsg(enc)
+
+			for row := range series.RowCh() {
+				if row.Err != nil {
+					enc.WriteInt(len(values) + 1)
+					for _, v := range values {
+						val := Row{Value: v}
+						val.EncodeMsg(enc)
+					}
+					values = values[:0]
+
+					err := RowError{Error: row.Err.Error()}
+					err.EncodeMsg(enc)
+					continue
+				}
+
+				values = append(values, row.Values)
+				if len(values) == cap(values) {
+					enc.WriteInt(len(values))
+					for _, v := range values {
+						val := Row{Value: v}
+						val.EncodeMsg(enc)
+					}
+					values = values[:0]
+
+					enc.Flush()
+					if w, ok := w.(http.Flusher); ok {
+						w.Flush()
+					}
+				}
+			}
+
+			if len(values) > 0 {
+				enc.WriteInt(len(values))
+				for _, v := range values {
+					val := Row{Value: v}
+					val.EncodeMsg(enc)
+				}
+				values = values[:0]
+			}
+			enc.WriteInt(0)
+
+			enc.Flush()
+			if w, ok := w.(http.Flusher); ok {
+				w.Flush()
+			}
+		}
+		enc.WriteInt(0)
+
+		enc.Flush()
+		if w, ok := w.(http.Flusher); ok {
+			w.Flush()
+		}
+	}
+	return nil
+}

@@ -447,19 +447,26 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user *meta.
 	}
 
 	// Read the results and encode them in the proper structure.
-	if chunked {
-		emitter := &ChunkedEmitter{
-			ChunkSize: chunkSize,
-			Epoch:     epoch,
+	/*
+		if chunked {
+			emitter := &ChunkedEmitter{
+				ChunkSize: chunkSize,
+				Epoch:     epoch,
+			}
+			emitter.Emit(rw, results)
+		} else {
+			emitter := &Emitter{
+				MaxRowLimit: h.Config.MaxRowLimit,
+				Epoch:       epoch,
+			}
+			emitter.Emit(rw, results)
 		}
-		emitter.Emit(rw, results)
-	} else {
-		emitter := &Emitter{
-			MaxRowLimit: h.Config.MaxRowLimit,
-			Epoch:       epoch,
-		}
-		emitter.Emit(rw, results)
+	*/
+	emitter := MessagePackEmitter{
+		ChunkSize: chunkSize,
+		Epoch:     epoch,
 	}
+	emitter.Emit(w, results)
 }
 
 // async drains the results from an async query and logs a message if it fails.
