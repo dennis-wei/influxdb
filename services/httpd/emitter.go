@@ -1,18 +1,83 @@
 package httpd
 
 import (
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 )
 
-type Emitter struct {
+type Encoder interface {
+	ContentType() string
+	Encode(w io.Writer, results <-chan *influxql.ResultSet)
+}
+
+func NewEncoder(r *http.Request, config *Config) Encoder {
+	epoch := strings.TrimSpace(r.FormValue("epoch"))
+	switch r.Header.Get("Accept") {
+	case "application/csv", "text/csv":
+		formatter := &csvFormatter{statementID: -1}
+		chunked, size := parseChunkedOptions(r)
+		if chunked {
+			return &chunkedEncoder{
+				Formatter: formatter,
+				ChunkSize: size,
+				Epoch:     epoch,
+			}
+		}
+		return &defaultEncoder{
+			Formatter:   formatter,
+			MaxRowLimit: config.MaxRowLimit,
+			Epoch:       epoch,
+		}
+	case "application/x-msgpack":
+		_, size := parseChunkedOptions(r)
+		if size == 0 {
+			size = DefaultChunkSize
+		}
+		return &messagePackEncoder{
+			Epoch:     epoch,
+			ChunkSize: size,
+		}
+	case "application/json":
+		fallthrough
+	default:
+		pretty := r.URL.Query().Get("pretty") == "true"
+		formatter := &jsonFormatter{Pretty: pretty}
+		chunked, size := parseChunkedOptions(r)
+		if chunked {
+			return &chunkedEncoder{
+				Formatter: formatter,
+				ChunkSize: size,
+				Epoch:     epoch,
+			}
+		}
+		return &defaultEncoder{
+			Formatter:   formatter,
+			MaxRowLimit: config.MaxRowLimit,
+			Epoch:       epoch,
+		}
+	}
+}
+
+type defaultEncoder struct {
+	Formatter interface {
+		WriteResponse(w io.Writer, resp Response) (int, error)
+		ContentType() string
+	}
 	MaxRowLimit int
 	Epoch       string
 }
 
-func (e *Emitter) Emit(w ResponseWriter, results <-chan *influxql.ResultSet) error {
+func (e *defaultEncoder) ContentType() string {
+	return e.Formatter.ContentType()
+}
+
+func (e *defaultEncoder) Encode(w io.Writer, results <-chan *influxql.ResultSet) {
 	var convertToEpoch func(row *influxql.Row)
 	if e.Epoch != "" {
 		convertToEpoch = epochConverter(e.Epoch)
@@ -48,7 +113,6 @@ RESULTS:
 
 			for row := range series.RowCh() {
 				if row.Err != nil {
-					// TODO: Better implementation.
 					r.Err = row.Err
 					r.Series = nil
 					continue RESULTS
@@ -65,16 +129,23 @@ RESULTS:
 			rows += len(s.Values)
 		}
 	}
-	w.WriteResponse(resp)
-	return nil
+	e.Formatter.WriteResponse(w, resp)
 }
 
-type ChunkedEmitter struct {
+type chunkedEncoder struct {
+	Formatter interface {
+		WriteResponse(w io.Writer, resp Response) (int, error)
+		ContentType() string
+	}
 	ChunkSize int
 	Epoch     string
 }
 
-func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultSet) error {
+func (e *chunkedEncoder) ContentType() string {
+	return e.Formatter.ContentType()
+}
+
+func (e *chunkedEncoder) Encode(w io.Writer, results <-chan *influxql.ResultSet) {
 	var convertToEpoch func(row *influxql.Row)
 	if e.Epoch != "" {
 		convertToEpoch = epochConverter(e.Epoch)
@@ -85,7 +156,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 
 		series := <-result.SeriesCh()
 		if series == nil {
-			w.WriteResponse(Response{Results: []*influxql.Result{
+			e.Formatter.WriteResponse(w, Response{Results: []*influxql.Result{
 				{
 					StatementID: result.ID,
 					Messages:    messages,
@@ -94,7 +165,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 			continue
 		} else if series.Err != nil {
 			// An error occurred while processing the result.
-			w.WriteResponse(Response{Results: []*influxql.Result{
+			e.Formatter.WriteResponse(w, Response{Results: []*influxql.Result{
 				{
 					StatementID: result.ID,
 					Messages:    messages,
@@ -107,6 +178,18 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 		for series != nil {
 			var values [][]interface{}
 			for row := range series.RowCh() {
+				if row.Err != nil {
+					// An error occurred while processing the result.
+					e.Formatter.WriteResponse(w, Response{Results: []*influxql.Result{
+						{
+							StatementID: result.ID,
+							Messages:    messages,
+							Err:         series.Err,
+						},
+					}})
+					continue
+				}
+
 				if convertToEpoch != nil {
 					convertToEpoch(&row)
 				}
@@ -124,7 +207,7 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 						Messages: messages,
 						Partial:  true,
 					}
-					w.WriteResponse(Response{Results: []*influxql.Result{r}})
+					e.Formatter.WriteResponse(w, Response{Results: []*influxql.Result{r}})
 					messages = nil
 					values = values[:0]
 				}
@@ -146,10 +229,9 @@ func (e *ChunkedEmitter) Emit(w ResponseWriter, results <-chan *influxql.ResultS
 			if series != nil {
 				r.Partial = true
 			}
-			w.WriteResponse(Response{Results: []*influxql.Result{r}})
+			e.Formatter.WriteResponse(w, Response{Results: []*influxql.Result{r}})
 		}
 	}
-	return nil
 }
 
 func epochConverter(epoch string) func(row *influxql.Row) {
@@ -172,4 +254,17 @@ func epochConverter(epoch string) func(row *influxql.Row) {
 			row.Values[0] = ts.UnixNano() / divisor
 		}
 	}
+}
+
+func parseChunkedOptions(r *http.Request) (chunked bool, size int) {
+	chunked = r.FormValue("chunked") == "true"
+	if chunked {
+		size = DefaultChunkSize
+		if chunked {
+			if n, err := strconv.ParseInt(r.FormValue("chunk_size"), 10, 64); err == nil && int(n) > 0 {
+				size = int(n)
+			}
+		}
+	}
+	return chunked, size
 }

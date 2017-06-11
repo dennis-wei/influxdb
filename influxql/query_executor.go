@@ -85,9 +85,6 @@ type ExecutionOptions struct {
 	// what resources can be returned in SHOW queries, etc.
 	Authorizer Authorizer
 
-	// The requested maximum number of points to return in each result.
-	ChunkSize int
-
 	// If this query is being executed in a read-only context.
 	ReadOnly bool
 

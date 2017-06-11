@@ -1,24 +1,27 @@
 package httpd
 
 import (
+	"io"
 	"net/http"
 
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/tinylib/msgp/msgp"
 )
 
-type MessagePackEmitter struct {
+type messagePackEncoder struct {
 	Epoch     string
 	ChunkSize int
 }
 
-func (e MessagePackEmitter) Emit(w http.ResponseWriter, results <-chan *influxql.ResultSet) error {
-	/*
-		var convertToEpoch func(row *influxql.Row)
-		if e.Epoch != "" {
-			convertToEpoch = epochConverter(e.Epoch)
-		}
-	*/
+func (e *messagePackEncoder) ContentType() string {
+	return "application/x-msgpack"
+}
+
+func (e *messagePackEncoder) Encode(w io.Writer, results <-chan *influxql.ResultSet) {
+	var convertToEpoch func(row *influxql.Row)
+	if e.Epoch != "" {
+		convertToEpoch = epochConverter(e.Epoch)
+	}
 	values := make([][]interface{}, 0, e.ChunkSize)
 
 	enc := msgp.NewWriter(w)
@@ -77,6 +80,10 @@ func (e MessagePackEmitter) Emit(w http.ResponseWriter, results <-chan *influxql
 					continue
 				}
 
+				if convertToEpoch != nil {
+					convertToEpoch(&row)
+				}
+
 				values = append(values, row.Values)
 				if len(values) == cap(values) {
 					enc.WriteInt(len(values))
@@ -115,5 +122,4 @@ func (e MessagePackEmitter) Emit(w http.ResponseWriter, results <-chan *influxql
 			w.Flush()
 		}
 	}
-	return nil
 }
